@@ -59,14 +59,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file
+# Load environment variables from .env file (development) or environment (production)
 env_path = Path('.env')
 if env_path.exists():
-    logger.info(f"[DEBUG] .env file found at: {env_path.absolute()}")
+    logger.info(f"[DEBUG] Loading .env file from: {env_path.absolute()}")
+    load_dotenv()
 else:
-    logger.warning(f"[DEBUG] .env file not found at: {env_path.absolute()}")
-
-load_dotenv()
+    logger.info(f"[DEBUG] No .env file found - using environment variables (production mode)")
+    # In production, environment variables are set directly by the platform
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -4207,24 +4207,25 @@ def main():
 
     application.post_init = post_init
     application.on_shutdown = on_shutdown
-    logger.info("Starting Secret Share Bot v69 (The Launch-Ready Build)...")
+    logger.info("🚀 Starting Secret Share Bot v69 (The Launch-Ready Build)...")
     logger.info("v69 fixes implemented: String casting, image variation, SFW enforcement")
+    logger.info("🔄 Beginning Telegram polling...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    logger.info("Starting Secret Share Bot in 10-20 seconds...")
     import time
     import random
+    import uuid
+    
+    # Generate unique instance ID for debugging
+    instance_id = str(uuid.uuid4())[:8]
+    logger.info(f"🚀 Starting Secret Share Bot instance {instance_id}")
+    
     delay = 10 + random.randint(0, 10)
-    logger.info(f"Waiting {delay} seconds to avoid polling conflicts...")
+    logger.info(f"⏰ Instance {instance_id} waiting {delay} seconds to avoid polling conflicts...")
     time.sleep(delay)
-
-    logger.info("Starting Secret Share Bot in 10-20 seconds...")
-    import time
-    import random
-    delay = 10 + random.randint(0, 10)
-    logger.info(f"Waiting {delay} seconds to avoid polling conflicts...")
-    time.sleep(delay)
+    
+    logger.info(f"✅ Instance {instance_id} delay complete, proceeding with startup...")
 
     logger.info("Checking for 'last_seen' column in 'users' table for retention features...")
     try:
@@ -4236,4 +4237,10 @@ if __name__ == "__main__":
         logger.error("!!! The 24-hour retention feature WILL NOT WORK without it.")
         logger.error("!!! Please run the provided Supabase SQL script to add the column.")
         logger.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    main()
+    
+    try:
+        logger.info(f"🎯 Instance {instance_id} starting main bot function...")
+        main()
+    except Exception as e:
+        logger.error(f"❌ Instance {instance_id} failed to start: {e}")
+        raise  # Re-raise to prevent silent failures

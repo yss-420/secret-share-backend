@@ -4213,7 +4213,7 @@ def main():
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    import time
+    import time as time_module
     import random
     import uuid
     
@@ -4223,7 +4223,7 @@ if __name__ == "__main__":
     
     delay = 10 + random.randint(0, 10)
     logger.info(f"⏰ Instance {instance_id} waiting {delay} seconds to avoid polling conflicts...")
-    time.sleep(delay)
+    time_module.sleep(delay)
     
     logger.info(f"✅ Instance {instance_id} delay complete, proceeding with startup...")
 

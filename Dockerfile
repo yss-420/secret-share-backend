@@ -25,5 +25,24 @@ EXPOSE 8081
 ENV PYTHONPATH=/app
 ENV TZ=UTC
 
-# Use webhook handler as entry point
-CMD ["python", "-c", "import webhook_handler; import runpod; runpod.serverless.start({'handler': webhook_handler.handler})"]
+# Run a simple HTTP server for webhooks
+CMD ["python", "-c", "from http.server import HTTPServer, BaseHTTPRequestHandler; import json; import webhook_handler; \
+class WebhookHandler(BaseHTTPRequestHandler): \
+    def do_POST(self): \
+        content_length = int(self.headers['Content-Length']); \
+        post_data = self.rfile.read(content_length); \
+        try: \
+            data = json.loads(post_data.decode('utf-8')); \
+            result = webhook_handler.handler(data); \
+            self.send_response(200); \
+            self.send_header('Content-type', 'application/json'); \
+            self.end_headers(); \
+            self.wfile.write(json.dumps(result).encode('utf-8')); \
+        except Exception as e: \
+            self.send_response(500); \
+            self.end_headers(); \
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8')); \
+    def log_message(self, format, *args): pass; \
+httpd = HTTPServer(('0.0.0.0', 8081), WebhookHandler); \
+print('Server starting on port 8081...'); \
+httpd.serve_forever()"]

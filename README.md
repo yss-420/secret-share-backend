@@ -182,4 +182,4 @@ For deployment issues:
 
 ---
 
-**Built with ❤️ for premium Telegram bot experiences** 
+**Built with ❤️ for premium Telegram bot experiences** # Railway deployment trigger Sun Jul 27 00:56:32 IST 2025

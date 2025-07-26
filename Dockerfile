@@ -25,5 +25,5 @@ EXPOSE 8081
 ENV PYTHONPATH=/app
 ENV TZ=UTC
 
-# Run the bot
-CMD ["python", "secret_share_bot.py"]
+# Use webhook handler as entry point
+CMD ["python", "-c", "import webhook_handler; import runpod; runpod.serverless.start({'handler': webhook_handler.handler})"]

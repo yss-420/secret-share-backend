@@ -31,7 +31,7 @@ git add .
 git commit -m "Initial commit: Production-ready Secret Share Bot with security fixes and frontend integration"
 
 # Add GitHub remote (replace YOUR_USERNAME)
-git remote add origin https://github.com/YOUR_USERNAME/secret-share-bot-backend.git
+git remote add origin https://github.com/yss-420/secret-share-bot-backend.git
 
 # Push to GitHub
 git push -u origin main

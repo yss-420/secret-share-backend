@@ -4212,6 +4212,14 @@ def main():
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
+    logger.info("Starting Secret Share Bot in 5 seconds...")
+    import time
+    time.sleep(5)  # Wait to avoid polling conflicts on restart
+
+    logger.info("Starting Secret Share Bot in 5 seconds...")
+    import time
+    time.sleep(5)  # Wait to avoid polling conflicts on restart
+
     logger.info("Checking for 'last_seen' column in 'users' table for retention features...")
     try:
         supabase.table('users').select('last_seen').limit(1).execute()

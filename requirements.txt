@@ -5,12 +5,8 @@ elevenlabs==1.13.3
 requests==2.32.3
 python-dotenv==1.0.1
 aiohttp==3.10.11
-asyncio
-datetime
-typing
 pydantic==2.10.3
 twilio==9.3.7
 pillow==11.0.0
-logging
 asyncpg==0.30.0
 psycopg2-binary==2.9.10

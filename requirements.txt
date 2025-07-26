@@ -1,4 +1,4 @@
-python-telegram-bot==21.7
+python-telegram-bot[job-queue]==21.7
 supabase==2.8.1
 replicate==1.0.4
 elevenlabs==1.13.3

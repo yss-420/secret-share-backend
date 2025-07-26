@@ -108,10 +108,11 @@ def test_elevenlabs_key():
     """Test the ElevenLabs API key."""
     try:
         # Try to get voices to test the API key using the new API
-        from elevenlabs import generate, set_api_key
-        set_api_key(ELEVENLABS_API_KEY)
-        # Test with a simple voice generation
-        audio = generate(text="Test", voice="Rachel")
+        from elevenlabs.client import ElevenLabs
+        # Test ElevenLabs connection with new API
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+        # Test by getting voices (simpler test)
+        voices = client.voices.get_all()
         logger.info("✅ ElevenLabs API key is valid!")
         return True
     except Exception as e:
@@ -130,8 +131,8 @@ else:
 async def test_phone_number_import():
     """Test the phone number import functionality."""
     try:
-        from elevenlabs import set_api_key
-        set_api_key(ELEVENLABS_API_KEY)
+        from elevenlabs.client import ElevenLabs
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
         
         # For now, just test that the API key works
         logger.info("✅ ElevenLabs API key is valid for phone number import!")
@@ -1248,8 +1249,8 @@ class ElevenLabsManager:
     def _init_client(self):
         """Initialize the ElevenLabs client."""
         try:
-            from elevenlabs import set_api_key
-            set_api_key(self.api_key)
+            from elevenlabs.client import ElevenLabs
+            self.client = ElevenLabs(api_key=self.api_key)
             logger.info("[ELEVENLABS] Client initialized successfully")
         except Exception as e:
             logger.error(f"[ELEVENLABS] Failed to initialize client: {e}")
@@ -1270,11 +1271,10 @@ class ElevenLabsManager:
     async def create_voice_note(self, text: str, voice_id: str) -> Optional[bytes]:
         """Create a voice note using ElevenLabs API."""
         try:
-            from elevenlabs import generate
             # Add audio tags for better voice generation
             enhanced_text = self.add_audio_tags(text)
-            # Generate audio
-            audio = generate(text=enhanced_text, voice=voice_id)
+            # Generate audio using the initialized client
+            audio = self.client.generate(text=enhanced_text, voice=voice_id)
             return audio
         except Exception as e:
             logger.error(f"[VOICE NOTE] Failed to create voice note: {e}")

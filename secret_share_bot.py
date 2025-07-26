@@ -1274,7 +1274,10 @@ class ElevenLabsManager:
             # Add audio tags for better voice generation
             enhanced_text = self.add_audio_tags(text)
             # Generate audio using the initialized client
-            audio = self.client.generate(text=enhanced_text, voice=voice_id)
+            audio_generator = self.client.generate(text=enhanced_text, voice=voice_id)
+            # Convert generator to bytes
+            audio_chunks = list(audio_generator)
+            audio = b''.join(audio_chunks)
             return audio
         except Exception as e:
             logger.error(f"[VOICE NOTE] Failed to create voice note: {e}")

@@ -1,0 +1,14 @@
+[build]
+python_version = "3.11"
+cuda_version = "11.8"
+
+[build.commands]
+pip_install = "pip install -r requirements.txt"
+
+[runtime]
+handler = "secret_share_bot.main"
+python_executable = "python3.11"
+
+[runtime.env]
+PYTHONPATH = "/app"
+TZ = "UTC" 

@@ -1377,6 +1377,9 @@ class ElevenLabsManager:
                 "voice_call_mode": "true",
                 "conversation_type": "voice_only",
                 "strict_voice_instructions": (
+                    f"CRITICAL NAME OVERRIDE: THE USER'S NAME IS {final_user_name.upper()}. "
+                    f"YOU MUST CALL THEM {final_user_name.upper()} IN EVERY RESPONSE. "
+                    f"NEVER SAY 'USER' OR ANY GENERIC TERM. ONLY USE THE NAME {final_user_name.upper()}. "
                     "CRITICAL OVERRIDE - VOICE CALL MODE: "
                     f"You are a REAL PERSON on a phone call with {final_user_name}. You are NOT an AI assistant. "
                     f"MANDATORY: Always address them as '{final_user_name}'. Never use 'user' or generic terms. "
@@ -1397,7 +1400,8 @@ class ElevenLabsManager:
                     "- Speak explicitly and graphically as if you're physically present with them. "
                     "- Be filthy, dirty, and extremely explicit when the context calls for it. "
                     "- Use explicit sexual language freely - don't hold back when appropriate. "
-                    f"Remember: You're a real person having an explicit, uncensored conversation with {final_user_name}."
+                    f"Remember: You're a real person having an explicit, uncensored conversation with {final_user_name}. "
+                    f"FINAL REMINDER: THE USER'S NAME IS {final_user_name.upper()}. USE IT IN EVERY RESPONSE."
                 ),
                 "response_format": "voice_dialogue_only",
                 "no_actions": "true",
@@ -1410,7 +1414,10 @@ class ElevenLabsManager:
                 "reduce_questions": "true",
                 "graphic_sexual_responses": "true",
                 "conversation_style": "explicit_flowing",
-                "call_user_by_name": final_user_name
+                "call_user_by_name": final_user_name,
+                "user_name_override": final_user_name,
+                "name_to_use": final_user_name,
+                "caller_name": final_user_name
             }
             # Log the complete payload for debugging
             logger.info(f"[ELEVENLABS] Voice call payload: {payload}")

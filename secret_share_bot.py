@@ -1376,12 +1376,11 @@ class ElevenLabsManager:
             
             # ElevenLabs expects user_name for the {{user_name}} variable in agent prompt
             # Keep it simple - only send what the agent actually uses
-            # TESTING: Force a hardcoded name to test ElevenLabs variable substitution
-            test_name = "TESTING_DYNAMIC_VARIABLES_WORKING"
+            # ElevenLabs expects user_name for the {{user_name}} variable in agent prompt
+            # Use the same name consistently in both first_message and dynamic_variables
             payload["dynamic_variables"] = {
-                "user_name": test_name
+                "user_name": final_user_name
             }
-            logger.info(f"[ELEVENLABS] 🧪 TESTING: Forcing dynamic variable user_name='{test_name}' to test ElevenLabs substitution")
             # Log the complete payload for debugging
             logger.info(f"[ELEVENLABS] Voice call payload: {payload}")
             

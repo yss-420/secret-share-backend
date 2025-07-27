@@ -1297,6 +1297,7 @@ class ElevenLabsManager:
             }
             import requests
             response = requests.get(url, headers=headers, timeout=30)
+            logger.info(f"[PHONE] Phone number fetch response: Status {response.status_code}")
             if response.status_code == 200:
                 data = response.json()
                 # Handle both list and dict response
@@ -1350,11 +1351,12 @@ class ElevenLabsManager:
     async def initiate_voice_call(self, agent_id: str, phone_number: str, user_id: int, user_name: Optional[str] = None) -> Optional[str]:
         """Initiate a voice call using ElevenLabs Twilio outbound call API with dynamic agent selection and agent_phone_number_id."""
         try:
-            # Get the phone number ID dynamically from ElevenLabs
-            agent_phone_number_id = await self.get_phone_number_id()
-            if not agent_phone_number_id:
-                logger.error("[ELEVENLABS] Failed to get phone number ID")
-                return None
+            # Use the working hardcoded phone number ID
+            agent_phone_number_id = 'phnum_01k04zb68xfd9bgzqb7qpsb204'
+            
+            # Log the parameters being used
+            logger.info(f"[ELEVENLABS] Voice call parameters: agent_id='{agent_id}', phone_number='{phone_number}', agent_phone_number_id='{agent_phone_number_id}'")
+            
             url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
             headers = {
                 "xi-api-key": self.api_key,
@@ -3226,6 +3228,17 @@ class SecretShareBot:
                     
                     await update.message.reply_text(f"📞 Calling you now! Maximum call duration: {max_call_minutes} minutes based on your {gems} Gems. You'll be charged {gem_cost} Gems per minute after the call ends.\n\n⚠️ Call will automatically end when you reach your gem limit.")
                     user_session.premium_offer_state = {}
+                else:
+                    # Voice call failed to initiate - give user error message
+                    logger.error(f"[VOICE CALL] Failed to initiate call for user {user_id}")
+                    await update.message.reply_text("❌ Sorry, I couldn't connect the call right now. This might be due to a technical issue or service availability. Please try again in a few minutes.\n\n💎 No gems were charged for this failed attempt.")
+                    user_session.premium_offer_state = {}
+                    
+                    # Notify admin of the failure
+                    await context.bot.send_message(
+                        chat_id=ADMIN_CHAT_ID,
+                        text=f"🚨 VOICE CALL FAILURE: User {user_id} - Call initiation returned None"
+                    )
             except Exception as e:
                 logger.error(f"[VOICE CALL] Error initiating call: {e}")
                 # No gems to refund since we don't deduct upfront anymore

@@ -1316,6 +1316,7 @@ class ElevenLabsManager:
                     return phone_numbers[0].get("id")
                 logger.error("[PHONE] No phone numbers found in ElevenLabs account.")
                 return None
+            else:
                 logger.error(f"[PHONE] Failed to fetch phone numbers: {response.status_code} {response.text}")
                 return None
         except Exception as e:
@@ -1349,8 +1350,11 @@ class ElevenLabsManager:
     async def initiate_voice_call(self, agent_id: str, phone_number: str, user_id: int, user_name: Optional[str] = None) -> Optional[str]:
         """Initiate a voice call using ElevenLabs Twilio outbound call API with dynamic agent selection and agent_phone_number_id."""
         try:
-            # Use the fixed agent_phone_number_id as provided
-            agent_phone_number_id = 'phnum_01k04zb68xfd9bgzqb7qpsb204'
+            # Get the phone number ID dynamically from ElevenLabs
+            agent_phone_number_id = await self.get_phone_number_id()
+            if not agent_phone_number_id:
+                logger.error("[ELEVENLABS] Failed to get phone number ID")
+                return None
             url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
             headers = {
                 "xi-api-key": self.api_key,
@@ -1408,12 +1412,18 @@ class ElevenLabsManager:
             }
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as response:
+                    logger.info(f"[ELEVENLABS] Voice call API response status: {response.status}")
+                    
                     if response.status == 200:
                         response_data = await response.json()
                         call_id = response_data.get('call_id')
+                        logger.info(f"[ELEVENLABS] Voice call response data: {response_data}")
                         logger.info(f"[ELEVENLABS] Successfully initiated voice call. Call ID: {call_id}")
                         return call_id
-                return None
+                    else:
+                        response_text = await response.text()
+                        logger.error(f"[ELEVENLABS] Voice call API error: Status {response.status}, Response: {response_text}")
+                        return None
         except Exception as e:
             logger.error(f"[ELEVENLABS] Error initiating voice call: {e}")
             return None

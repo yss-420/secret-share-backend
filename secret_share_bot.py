@@ -165,7 +165,7 @@ ELEVENLABS_AGENT_IDS = {
     "scarlett": "agent_01jzz6w5m3fcxake0c910wz6hx",
     "aria": "agent_01jzz7jxg1ekra9x07a2qwfdy3", 
     "priyanka": "agent_01jzz7wjp4fajaf1ftmren6szr",
-    "valentina": "agent_01jzz880zmfekt6bnz1yvfx",
+    "valentina": "agent_01jzz880zmfekt6pq6bnz1yvfx",
     "luna": "agent_01jzz8nms0eeyrfr77ek4c0300",
     "kiara": "agent_01jzz8xcvve7z9dvsh3mbkfsj4",
     "natasha": "agent_01jzz931h8fjtvnvyjf3f8at6y"

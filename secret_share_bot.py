@@ -1143,7 +1143,7 @@ class VideoGenerator:
             "seed": -1,
             "enable_prompt_optimizer": False,
             "enable_safety_checker": False,
-            "webhook_url": f"{os.getenv('WEBHOOK_BASE_URL', 'http://localhost:8081')}/api/wavespeed-webhook"  # Webhook endpoint
+            # Note: Wavespeed doesn't support webhooks, we'll use polling instead
         }
         
         logger.info(f"[VIDEO] Submitting to Wavespeed API: image_url={image_url}, prompt={safe_prompt}")
@@ -1198,6 +1198,78 @@ class VideoGenerator:
             safe_prompt = "elegant woman, graceful movement, cinematic lighting, artistic composition"
         
         return safe_prompt.strip()
+
+    async def check_video_status(self, task_id: str) -> dict:
+        """Check the status of a video generation task."""
+        if not self.api_token or not task_id:
+            return {"status": "error", "message": "Missing API token or task ID"}
+        
+        try:
+            # Wavespeed status check endpoint (common pattern for AI services)
+            status_url = f"https://api.wavespeed.ai/api/v3/task/{task_id}"
+            
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    "Authorization": f"Bearer {self.api_token}",
+                    "Content-Type": "application/json"
+                }
+                
+                async with session.get(status_url, headers=headers, timeout=10) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        logger.info(f"[VIDEO STATUS] Task {task_id}: {result}")
+                        return result
+                    else:
+                        logger.warning(f"[VIDEO STATUS] Failed to check task {task_id}: {response.status}")
+                        return {"status": "error", "message": f"HTTP {response.status}"}
+                        
+        except Exception as e:
+            logger.error(f"[VIDEO STATUS] Error checking task {task_id}: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def poll_video_completion(self, task_id: str, user_id: int, max_attempts: int = 30) -> bool:
+        """Poll for video completion and deliver when ready."""
+        logger.info(f"[VIDEO POLL] Starting polling for task {task_id}, user {user_id}")
+        
+        for attempt in range(max_attempts):
+            try:
+                status_data = await self.check_video_status(task_id)
+                status = status_data.get("status", "").lower()
+                
+                logger.info(f"[VIDEO POLL] Attempt {attempt + 1}/{max_attempts} - Task {task_id}: {status}")
+                
+                if status == "completed" or status == "success":
+                    # Video is ready - extract URL and deliver
+                    outputs = status_data.get("data", {}).get("outputs", [])
+                    video_url = outputs[0] if outputs else None
+                    
+                    if video_url:
+                        logger.info(f"[VIDEO POLL] Task {task_id} completed! Delivering video: {video_url}")
+                        return video_url
+                    else:
+                        logger.error(f"[VIDEO POLL] Task {task_id} completed but no video URL found")
+                        return None
+                        
+                elif status == "failed" or status == "error":
+                    logger.error(f"[VIDEO POLL] Task {task_id} failed: {status_data}")
+                    return None
+                    
+                elif status == "processing" or status == "pending" or status == "running":
+                    # Still processing, wait and try again
+                    await asyncio.sleep(10)  # Wait 10 seconds between polls
+                    continue
+                else:
+                    logger.warning(f"[VIDEO POLL] Unknown status for task {task_id}: {status}")
+                    await asyncio.sleep(10)
+                    continue
+                    
+            except Exception as e:
+                logger.error(f"[VIDEO POLL] Error polling task {task_id}: {e}")
+                await asyncio.sleep(10)
+                continue
+        
+        logger.error(f"[VIDEO POLL] Task {task_id} timed out after {max_attempts} attempts")
+        return None
 
     def _get_conservative_video_prompt(self, original_prompt: str) -> str:
         """Generate a very conservative video prompt as fallback."""
@@ -1488,23 +1560,9 @@ class SecretShareBot:
        web.run_app(self.web_app, port=8081, handle_signals=False)
 
     async def handle_wavespeed_webhook(self, request):
-       """Handle Wavespeed webhook for video completion."""
-       data = await request.json()
-       logger.info(f"[WEBHOOK] Received Wavespeed webhook: {data}")
-       
-       # Extract task ID and video URL from Wavespeed response
-       task_id = data.get('id') or data.get('task_id')
-       outputs = data.get('outputs', [])
-       video_url = outputs[0] if outputs else None
-       
-       logger.info(f"[WEBHOOK] task_id={task_id}, video_url={video_url}")
-       
-       # Find user by task_id
-       for user_id, session in self.active_users.items():
-           if session.last_video_task and session.last_video_task.get('task_id') == task_id:
-               await self._deliver_video(user_id, video_url)
-               break
-       return web.Response(text='ok')
+       """Handle Wavespeed webhook - NOTE: Wavespeed doesn't actually support webhooks, this is unused."""
+       logger.info(f"[WEBHOOK] Received unexpected Wavespeed webhook call (Wavespeed doesn't support webhooks)")
+       return web.Response(text='ok', status=200)
 
     async def handle_twilio_webhook(self, request):
        """Handle Twilio webhook for call status updates."""
@@ -1758,40 +1816,45 @@ class SecretShareBot:
        if self.kobold_available:
            raw = await self.kobold_api.generate(prompt, max_tokens=40)
            return self._ensure_complete_sentence(raw)
-    async def _poll_video_completion(self, user_id: int, task_id: str, max_attempts: int = 60):
-       """Poll for video completion every 30 seconds for up to 30 minutes."""
-       user_session = self.active_users.get(user_id)
-       if not user_session or not user_session.last_video_task:
-           logger.warning(f"[POLL] No active video task for user {user_id}")
-           return
-           
-       for attempt in range(max_attempts):
-           await asyncio.sleep(30)  # Wait 30 seconds between checks
-           
-           # Check if user still has active video task
-           if not user_session.last_video_task or user_session.last_video_task.get('task_id') != task_id:
-               logger.info(f"[POLL] Video task completed or cancelled for user {user_id}")
-               return
-           
-           # Check video status
-           video_url = await self.video_generator.check_video_status(task_id)
+    async def _poll_video_completion(self, user_id: int, task_id: str, max_attempts: int = 30):
+       """Poll for video completion using the new VideoGenerator polling method."""
+       logger.info(f"[POLL] Starting video polling for user {user_id}, task {task_id}")
+       
+       try:
+           # Use the VideoGenerator's polling method
+           video_url = await self.video_generator.poll_video_completion(task_id, user_id, max_attempts)
            
            if video_url:
                logger.info(f"[POLL] Video completed for user {user_id}: {video_url}")
                await self._deliver_video(user_id, video_url)
-               # Clear the video task
-               user_session.last_video_task = {}
-               return
+               
+               # Clear the video task from user session
+               user_session = self.active_users.get(user_id)
+               if user_session:
+                   user_session.last_video_task = {}
+           else:
+               logger.warning(f"[POLL] Video task {task_id} for user {user_id} failed or timed out")
+               await self.application.bot.send_message(
+                   chat_id=user_id, 
+                   text="Sorry, your video took longer than expected or failed to generate. Please try again later."
+               )
+               
+               # Clear the video task from user session
+               user_session = self.active_users.get(user_id)
+               if user_session:
+                   user_session.last_video_task = {}
+                   
+       except Exception as e:
+           logger.error(f"[POLL] Error polling video completion for user {user_id}: {e}")
+           await self.application.bot.send_message(
+               chat_id=user_id, 
+               text="Sorry, there was an error processing your video. Please try again later."
+           )
            
-           logger.info(f"[POLL] Attempt {attempt + 1}/{max_attempts} for user {user_id}, task {task_id}")
-       
-       # If we reach here, video didn't complete in time
-       logger.warning(f"[POLL] Video task {task_id} for user {user_id} did not complete in time")
-       await self.application.bot.send_message(
-           chat_id=user_id, 
-           text="Sorry, your video took longer than expected. Please try again later."
-       )
-       user_session.last_video_task = {}
+           # Clear the video task from user session
+           user_session = self.active_users.get(user_id)
+           if user_session:
+               user_session.last_video_task = {}
 
     async def send_premium_offer_overlay(self, update, context, user_id, offer_type, gem_cost, character_line=None):
        user_db_data = self.db.get_or_create_user(user_id, getattr(update.effective_user, 'username', 'Unknown'))

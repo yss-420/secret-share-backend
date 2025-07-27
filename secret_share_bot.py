@@ -1735,14 +1735,15 @@ class SecretShareBot:
        self.anticipation_jobs = {}  # user_id -> list of job references
        # Webhook security
        self._webhook_secret = os.getenv('TELEGRAM_WEBHOOK_SECRET', '')
-       # --- Webhook server for Wavespeed video delivery ---
+        # --- Webhook server for Wavespeed video delivery ---
        self.web_app = web.Application()
        self.web_app.add_routes([
-           web.post('/api/wavespeed-webhook', self.handle_wavespeed_webhook),
-           web.post('/api/twilio-webhook', self.handle_twilio_webhook),
-           web.post('/api/elevenlabs-webhook', self.handle_elevenlabs_webhook),
-           web.post('/api/initiate-payment', self.handle_payment_request)  # NEW
-       ])
+            web.post('/api/wavespeed-webhook', self.handle_wavespeed_webhook),
+            web.post('/api/twilio-webhook', self.handle_twilio_webhook),
+            web.post('/api/elevenlabs-webhook', self.handle_elevenlabs_webhook),
+            web.post('/api/initiate-payment', self.handle_payment_request),
+            web.get('/api/user-status/{telegram_id}', self.get_user_status_for_frontend)  # NEW
+        ])
        self.webhook_thread = threading.Thread(target=self._run_webhook_server, daemon=True)
        self.webhook_thread.start()
        # Call tracking for webhooks

@@ -1355,7 +1355,7 @@ class ElevenLabsManager:
             agent_phone_number_id = 'phnum_01k04zb68xfd9bgzqb7qpsb204'
             
             # Log the parameters being used
-            logger.info(f"[ELEVENLABS] Voice call parameters: agent_id='{agent_id}', phone_number='{phone_number}', agent_phone_number_id='{agent_phone_number_id}'")
+            logger.info(f"[ELEVENLABS] Voice call parameters: agent_id='{agent_id}', phone_number='{phone_number}', agent_phone_number_id='{agent_phone_number_id}', user_name='{user_name}'")
             
             url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
             headers = {
@@ -1412,13 +1412,17 @@ class ElevenLabsManager:
                 "conversation_style": "explicit_flowing",
                 "call_user_by_name": final_user_name
             }
+            # Log the complete payload for debugging
+            logger.info(f"[ELEVENLABS] Voice call payload: {payload}")
+            
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as response:
                     logger.info(f"[ELEVENLABS] Voice call API response status: {response.status}")
                     
                     if response.status == 200:
                         response_data = await response.json()
-                        call_id = response_data.get('call_id')
+                        # ElevenLabs returns 'callSid', not 'call_id'
+                        call_id = response_data.get('callSid') or response_data.get('call_id')
                         logger.info(f"[ELEVENLABS] Voice call response data: {response_data}")
                         logger.info(f"[ELEVENLABS] Successfully initiated voice call. Call ID: {call_id}")
                         return call_id

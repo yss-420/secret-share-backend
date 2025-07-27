@@ -1742,7 +1742,6 @@ class SecretShareBot:
             web.post('/api/twilio-webhook', self.handle_twilio_webhook),
             web.post('/api/elevenlabs-webhook', self.handle_elevenlabs_webhook),
             web.post('/api/initiate-payment', self.handle_payment_request),
-            web.get('/api/user-status/{telegram_id}', self.get_user_status_for_frontend)  # NEW
         ])
        self.webhook_thread = threading.Thread(target=self._run_webhook_server, daemon=True)
        self.webhook_thread.start()

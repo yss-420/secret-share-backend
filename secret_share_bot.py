@@ -1377,7 +1377,7 @@ class ElevenLabsManager:
             # ElevenLabs expects user_name for the {{user_name}} variable in agent prompt
             # Keep it simple - only send what the agent actually uses
             # TESTING: Force a hardcoded name to test ElevenLabs variable substitution
-            test_name = "JACOB_TEST_NAME"
+            test_name = "TESTING_DYNAMIC_VARIABLES_WORKING"
             payload["dynamic_variables"] = {
                 "user_name": test_name
             }

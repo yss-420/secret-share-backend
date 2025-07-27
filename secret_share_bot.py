@@ -2382,13 +2382,33 @@ class SecretShareBot:
             
             # Check call status - different methods for ElevenLabs vs Twilio calls
             if call_id.startswith('CA'):
-                # Twilio call - check for stale calls (webhook may have failed)
-                if duration_minutes >= 5:  # If call has been "active" for 5+ minutes, likely ended
-                    logger.warning(f"[CALL MONITOR] Twilio call {call_id} has been active for {duration_minutes} minutes - likely ended but webhook missed. Processing end.")
-                    precise_duration = max(1, duration_minutes)
-                    await self._process_call_end(call_id, user_id, precise_duration, start_time, 'stale_detection')
-                    context.job.schedule_removal()
-                    return
+                # Twilio call - only check for stale calls if duration exceeds reasonable limits
+                # AND we can't verify the call is still active
+                if duration_minutes >= 15:  # Only check for stale calls after 15 minutes
+                    try:
+                        # Try to get call status from Twilio API to verify if call is still active
+                        from twilio.rest import Client
+                        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                        call_info = twilio_client.calls(call_id).fetch()
+                        call_status = call_info.status.lower()
+                        
+                        if call_status in ['completed', 'busy', 'failed', 'canceled', 'no-answer']:
+                            logger.warning(f"[CALL MONITOR] Twilio call {call_id} actually ended (status: {call_status}) but webhook missed. Processing end.")
+                            precise_duration = max(1, duration_minutes)
+                            await self._process_call_end(call_id, user_id, precise_duration, start_time, 'twilio_api_detection')
+                            context.job.schedule_removal()
+                            return
+                        else:
+                            logger.info(f"[CALL MONITOR] Twilio call {call_id} still active (status: {call_status}), continuing monitoring")
+                    except Exception as e:
+                        logger.warning(f"[CALL MONITOR] Could not check Twilio call status for {call_id}: {e}")
+                        # If we can't check status and call has been running 20+ minutes, assume stale
+                        if duration_minutes >= 20:
+                            logger.warning(f"[CALL MONITOR] Twilio call {call_id} running {duration_minutes} minutes without status verification. Assuming stale.")
+                            precise_duration = max(1, duration_minutes)
+                            await self._process_call_end(call_id, user_id, precise_duration, start_time, 'stale_detection_fallback')
+                            context.job.schedule_removal()
+                            return
             else:
                 # ElevenLabs call - use API status check
                 call_status_data = await self.elevenlabs_manager.get_call_status(call_id)

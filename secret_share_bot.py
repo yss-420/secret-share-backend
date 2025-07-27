@@ -1541,8 +1541,37 @@ class SecretShareBot:
 
     async def handle_elevenlabs_webhook(self, request):
        """Handle ElevenLabs webhook for call completion events and finalize gem deduction."""
-       data = await request.json()
-       logger.info(f"[ELEVENLABS WEBHOOK] Received call event: {data}")
+       try:
+           # Verify webhook signature for security
+           webhook_secret = os.getenv('ELEVENLABS_WEBHOOK_SECRET')
+           if webhook_secret:
+               signature = request.headers.get('ElevenLabs-Signature')
+               if signature:
+                   import hmac
+                   import hashlib
+                   body = await request.read()
+                   expected_signature = hmac.new(
+                       webhook_secret.encode('utf-8'),
+                       body,
+                       hashlib.sha256
+                   ).hexdigest()
+                   if not hmac.compare_digest(signature, expected_signature):
+                       logger.warning(f"[ELEVENLABS WEBHOOK] Invalid signature: {signature}")
+                       return web.Response(status=401, text='Invalid signature')
+                   logger.info(f"[ELEVENLABS WEBHOOK] Signature verified successfully")
+               else:
+                   logger.warning(f"[ELEVENLABS WEBHOOK] No signature provided")
+           
+           # Parse the webhook data
+           if hasattr(request, '_body'):
+               data = json.loads(request._body.decode('utf-8'))
+           else:
+               data = await request.json()
+           logger.info(f"[ELEVENLABS WEBHOOK] Received call event: {data}")
+       except Exception as e:
+           logger.error(f"[ELEVENLABS WEBHOOK] Error processing webhook: {e}")
+           data = await request.json()
+           logger.info(f"[ELEVENLABS WEBHOOK] Received call event (fallback): {data}")
        call_id = data.get('call_id') or data.get('callSid')
        event_type = data.get('event_type')
        duration = data.get('duration')

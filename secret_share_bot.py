@@ -98,8 +98,32 @@ if not all([BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY, REPLICATE_API_TOKEN, WAVESPEE
     logger.error("FATAL: Missing one or more environment variables (TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, REPLICATE_API_TOKEN, WAVESPEED_API_TOKEN, ADMIN_CHAT_ID, ELEVENLABS_API_KEY).")
     raise ValueError("Missing required environment variables! Check your .env file or environment settings.")
 
-# Initialize Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Initialize Supabase with connection recovery
+def create_supabase_client():
+    """Create a new Supabase client instance."""
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = create_supabase_client()
+
+async def execute_with_retry(operation, *args, max_retries=3, **kwargs):
+    """Execute a Supabase operation with retry and connection recovery."""
+    global supabase
+    
+    for attempt in range(max_retries):
+        try:
+            return operation(*args, **kwargs)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if attempt < max_retries - 1 and any(keyword in error_msg for keyword in ['disconnected', 'connection', 'timeout', 'network']):
+                logger.warning(f"[DB RETRY] Attempt {attempt + 1} failed: {e}. Recreating connection...")
+                # Recreate the Supabase client
+                supabase = create_supabase_client()
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                continue
+            else:
+                # Final attempt failed or non-connection error
+                raise e
+    return None
 
 # Initialize ElevenLabs
 
@@ -657,25 +681,29 @@ class Database:
             return False
 
     @staticmethod
-    def update_user_on_message(user_id: int) -> bool:
+    async def update_user_on_message(user_id: int) -> bool:
         """Increments user's message counts after a successful message."""
         try:
-            supabase.rpc('increment_user_messages', {'p_user_id': user_id}).execute()
+            await execute_with_retry(
+                lambda: supabase.rpc('increment_user_messages', {'p_user_id': user_id}).execute()
+            )
             return True
         except Exception as e:
             logger.error(f"DB ERROR: Failed to update message counts for user {user_id} via RPC. Error: {e}")
             return False
 
     @staticmethod
-    def create_conversation_entry(user_id: int, character: str, user_message: str, bot_response: str):
+    async def create_conversation_entry(user_id: int, character: str, user_message: str, bot_response: str):
         """Saves a record of the conversation to the database."""
         try:
-            supabase.table('conversations').insert({
-                'user_id': user_id,
-                'character': character,
-                'user_message': user_message,
-                'bot_response': bot_response
-            }).execute()
+            await execute_with_retry(
+                lambda: supabase.table('conversations').insert({
+                    'user_id': user_id,
+                    'character': character,
+                    'user_message': user_message,
+                    'bot_response': bot_response
+                }).execute()
+            )
         except Exception as e:
             logger.error(f"DB ERROR: Could not save conversation for user {user_id}. Error: {e}")
 
@@ -775,7 +803,7 @@ class Database:
             return False
 
     @staticmethod
-    def save_user_session(user_id: int, session_data: dict) -> bool:
+    async def save_user_session(user_id: int, session_data: dict) -> bool:
         """Save user session data to database for persistence across bot restarts."""
         try:
             # Convert session data to JSON-serializable format
@@ -793,10 +821,12 @@ class Database:
                 'last_interaction_time': session_data.get('last_interaction_time', datetime.now(timezone.utc).isoformat())
             }
             
-            supabase.table('users').update({
-                'session_data': json.dumps(session_json),
-                'last_seen': datetime.now(timezone.utc).isoformat()
-            }).eq('telegram_id', user_id).execute()
+            await execute_with_retry(
+                lambda: supabase.table('users').update({
+                    'session_data': json.dumps(session_json),
+                    'last_seen': datetime.now(timezone.utc).isoformat()
+                }).eq('telegram_id', user_id).execute()
+            )
             
             logger.info(f"[SESSION SAVE] Saved session for user {user_id}")
             return True
@@ -2492,9 +2522,9 @@ class SecretShareBot:
             if len(user_session.conversation_history) > 50:
                 user_session.conversation_history = user_session.conversation_history[-50:]
             
-            asyncio.create_task(asyncio.to_thread(self.db.update_user_on_message, user_id))
+            asyncio.create_task(self.db.update_user_on_message(user_id))
             if final_response:
-                asyncio.create_task(asyncio.to_thread(self.db.create_conversation_entry, user_id, character['full_name'], user_message, final_response))
+                asyncio.create_task(self.db.create_conversation_entry(user_id, character['full_name'], user_message, final_response))
 
             # Save session to database after successful message processing
             session_data = {
@@ -2510,7 +2540,7 @@ class SecretShareBot:
                 'asked_for_name': user_session.asked_for_name,
                 'last_interaction_time': user_session.last_interaction_time.isoformat()
             }
-            asyncio.create_task(asyncio.to_thread(self.db.save_user_session, user_id, session_data))
+            asyncio.create_task(self.db.save_user_session(user_id, session_data))
 
         except Exception as e:
             logger.error(f"Error in handle_message for user {user_id}: {e}", exc_info=True)

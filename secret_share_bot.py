@@ -1466,6 +1466,11 @@ class ElevenLabsManager:
     async def get_call_status(self, call_id: str) -> dict:
         """Get the status of a voice call via ElevenLabs API."""
         try:
+            # Check if this is a Twilio call ID (starts with CA) vs ElevenLabs call ID
+            if call_id.startswith('CA'):
+                logger.warning(f"[ELEVENLABS] Skipping ElevenLabs status check for Twilio call ID: {call_id}")
+                return {"status": "unknown", "message": "Twilio call ID, not ElevenLabs"}
+            
             url = f"https://api.elevenlabs.io/v1/convai/calls/{call_id}"
             headers = {
                 "xi-api-key": self.api_key,
@@ -1478,6 +1483,9 @@ class ElevenLabsManager:
                         data = await response.json()
                         logger.info(f"[ELEVENLABS] Call {call_id} status: {data.get('status', 'unknown')}")
                         return data
+                    elif response.status == 404:
+                        logger.warning(f"[ELEVENLABS] Call {call_id} not found (404) - may have ended or expired")
+                        return {"status": "ended", "message": "Call not found"}
                     else:
                         logger.warning(f"[ELEVENLABS] Failed to get call status for {call_id}: {response.status}")
                         return {}
@@ -2105,15 +2113,21 @@ class SecretShareBot:
                 context.job.schedule_removal()
                 return
             
-            # NEW: Check call status via ElevenLabs API to detect natural call end
+            # NEW: Check call status via ElevenLabs API to detect natural call end (skip for Twilio IDs)
             call_status_data = await self.elevenlabs_manager.get_call_status(call_id)
             call_status = call_status_data.get('status', '').lower()
             
-            # If call has ended naturally, process it
+            # If call has ended naturally or ElevenLabs API indicates it's ended, process it
             if call_status in ['ended', 'completed', 'terminated', 'finished']:
                 logger.info(f"[CALL MONITOR] Call {call_id} ended naturally. Status: {call_status}")
                 await self._process_call_end(call_id, user_id, duration_minutes, start_time, 'natural')
                 context.job.schedule_removal()
+                return
+            
+            # For very short calls (less than 30 seconds), check more frequently for early termination
+            if duration_minutes == 0 and duration_seconds < 30:
+                # Don't send warnings for calls under 30 seconds - they might end naturally very quickly
+                logger.info(f"[CALL MONITOR] Call {call_id} very short ({duration_seconds}s), monitoring closely")
                 return
             
             # Check if call is approaching or exceeding the limit
@@ -2360,12 +2374,12 @@ class SecretShareBot:
                 return  # Do not send a normal chat reply
         # --- END EARLY UPSALE CHECKS ---
         # Name detection and prompt logic - ALWAYS check for name updates
-        # Check for explicit name statements that should override existing names
+        # Check for explicit name statements that should override existing names (more conservative)
         name_patterns = [
             r"(?:my name is|call me|the name is|i(?:'m| am)|it's|this is|you can call me|just call me|name's)\s+([A-Za-z]{2,20})\b",
-            r"^([A-Za-z]{2,20})[.,!\s]*$",
-            r"^([A-Za-z]{2,20})[.,!\s]+hi$",
-            r"^([A-Za-z]{2,20}) here\b"
+            # Removed overly broad single-word pattern that caught words like "ok", "yes", etc.
+            r"^([A-Z][a-z]{2,19})[.,!\s]+hi$",  # Only capitalized names followed by "hi"
+            r"^([A-Z][a-z]{2,19}) here\b"      # Only capitalized names with "here"
         ]
         potential_name = None
         for pattern in name_patterns:
@@ -2535,7 +2549,7 @@ class SecretShareBot:
                 logger.info(f"[BLUR DEBUG] User {user_id} - Image #{user_session.free_images_sent}, should blur: {user_session.free_images_sent % 2 == 0}")
                 if user_session.free_images_sent % 2 == 0:
                     logger.info(f"[BLUR] Attempting to blur image #{user_session.free_images_sent} for user {user_id}")
-                    blurred_url = blur_image_with_replicate(image_url, blur_scale=150)
+                    blurred_url = blur_image_with_replicate(image_url, blur_scale=500)
                     if blurred_url:
                         logger.info(f"[BLUR] Successfully got blurred URL: {blurred_url}")
                         import requests
@@ -4278,7 +4292,7 @@ def is_voice_call_request(message: str) -> bool:
             return True
     return False
 
-def blur_image_with_replicate(image_url: str, blur_scale: int = 150) -> Optional[str]:
+def blur_image_with_replicate(image_url: str, blur_scale: int = 500) -> Optional[str]:
     try:
         logger.info(f"[BLUR] Starting blur process for {image_url} with scale {blur_scale}")
         if not REPLICATE_API_TOKEN:

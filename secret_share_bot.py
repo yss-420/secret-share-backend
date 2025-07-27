@@ -1361,7 +1361,7 @@ class ElevenLabsManager:
             
             # Log the parameters being used
             logger.info(f"[ELEVENLABS] Voice call parameters: agent_id='{agent_id}', phone_number='{phone_number}', agent_phone_number_id='{agent_phone_number_id}', user_name='{user_name}'")
-            logger.warning(f"[ELEVENLABS] 🚨 ATTEMPTING WORKAROUND: ElevenLabs dynamic variables appear broken, trying aggressive name forcing for '{final_user_name}'")
+            logger.warning(f"[ELEVENLABS] 🔧 NEW APPROACH: Asking user to state their name during call since dynamic variables are broken")
             
             url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
             headers = {
@@ -1372,18 +1372,19 @@ class ElevenLabsManager:
                 "agent_id": agent_id,  # The agent for the selected character
                 "agent_phone_number_id": agent_phone_number_id,  # Fixed phone number ID
                 "to_number": phone_number,   # The user's phone number
-                "first_message": f"Hey {final_user_name}! I'm so excited to finally talk to you on the phone! My name is whatever character I am, and I'm talking to {final_user_name}. I will call you {final_user_name} throughout this entire conversation, never 'user' or 'username'.",
+                "first_message": f"Hey there! I'm so excited to finally talk to you on the phone! Before we get started, can you remind me your name again? I want to make sure I address you properly throughout our conversation.",
             }
             
-            # Since dynamic_variables are broken, let's try a more aggressive first_message approach
-            # And still send dynamic_variables as backup
+            # Keep sending dynamic_variables as backup (even though they're broken)
+            # Main strategy: Ask user to state their name during the call
             payload["dynamic_variables"] = {
                 "user_name": final_user_name
             }
             
-            # Note: Removing conversation_config override for now - may not be correct API structure
+            # Note: Using name-asking strategy instead of relying on broken dynamic variables
             # Log the complete payload for debugging
             logger.info(f"[ELEVENLABS] Voice call payload: {payload}")
+            logger.info(f"[ELEVENLABS] 🎯 STRATEGY: First message will ask user to state their name, then agent should learn it naturally")
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as response:

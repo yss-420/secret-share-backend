@@ -1227,7 +1227,7 @@ class VideoGenerator:
             logger.error(f"[VIDEO STATUS] Error checking task {task_id}: {e}")
             return {"status": "error", "message": str(e)}
 
-    async def poll_video_completion(self, task_id: str, user_id: int, max_attempts: int = 30) -> bool:
+    async def poll_video_completion(self, task_id: str, user_id: int, max_attempts: int = 60) -> bool:
         """Poll for video completion and deliver when ready."""
         logger.info(f"[VIDEO POLL] Starting polling for task {task_id}, user {user_id}")
         
@@ -1816,7 +1816,7 @@ class SecretShareBot:
        if self.kobold_available:
            raw = await self.kobold_api.generate(prompt, max_tokens=40)
            return self._ensure_complete_sentence(raw)
-    async def _poll_video_completion(self, user_id: int, task_id: str, max_attempts: int = 30):
+    async def _poll_video_completion(self, user_id: int, task_id: str, max_attempts: int = 60):
        """Poll for video completion using the new VideoGenerator polling method."""
        logger.info(f"[POLL] Starting video polling for user {user_id}, task {task_id}")
        

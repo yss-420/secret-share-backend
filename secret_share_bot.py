@@ -1199,68 +1199,27 @@ class VideoGenerator:
         
         return safe_prompt.strip()
 
-    async def check_video_status(self, task_id: str) -> dict:
-        """Check the status of a video generation task."""
-        if not self.api_token or not task_id:
-            return {"status": "error", "message": "Missing API token or task ID"}
-        
-        try:
-            # Wavespeed status check endpoint (common pattern for AI services)
-            status_url = f"https://api.wavespeed.ai/api/v3/task/{task_id}"
-            
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {self.api_token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with session.get(status_url, headers=headers, timeout=10) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        logger.info(f"[VIDEO STATUS] Task {task_id}: {result}")
-                        return result
-                    else:
-                        logger.warning(f"[VIDEO STATUS] Failed to check task {task_id}: {response.status}")
-                        return {"status": "error", "message": f"HTTP {response.status}"}
-                        
-        except Exception as e:
-            logger.error(f"[VIDEO STATUS] Error checking task {task_id}: {e}")
-            return {"status": "error", "message": str(e)}
 
-    async def poll_video_completion(self, task_id: str, user_id: int, max_attempts: int = 60) -> bool:
+
+    async def poll_video_completion(self, task_id: str, user_id: int, max_attempts: int = 60) -> Optional[str]:
         """Poll for video completion and deliver when ready."""
         logger.info(f"[VIDEO POLL] Starting polling for task {task_id}, user {user_id}")
         
         for attempt in range(max_attempts):
             try:
-                status_data = await self.check_video_status(task_id)
-                status = status_data.get("status", "").lower()
+                # check_video_status returns video URL (string) if completed, None if not ready
+                video_url = await self.check_video_status(task_id)
                 
-                logger.info(f"[VIDEO POLL] Attempt {attempt + 1}/{max_attempts} - Task {task_id}: {status}")
+                logger.info(f"[VIDEO POLL] Attempt {attempt + 1}/{max_attempts} - Task {task_id}: {'completed' if video_url else 'processing'}")
                 
-                if status == "completed" or status == "success":
-                    # Video is ready - extract URL and deliver
-                    outputs = status_data.get("data", {}).get("outputs", [])
-                    video_url = outputs[0] if outputs else None
-                    
-                    if video_url:
-                        logger.info(f"[VIDEO POLL] Task {task_id} completed! Delivering video: {video_url}")
-                        return video_url
-                    else:
-                        logger.error(f"[VIDEO POLL] Task {task_id} completed but no video URL found")
-                        return None
-                        
-                elif status == "failed" or status == "error":
-                    logger.error(f"[VIDEO POLL] Task {task_id} failed: {status_data}")
-                    return None
-                    
-                elif status == "processing" or status == "pending" or status == "running":
-                    # Still processing, wait and try again
-                    await asyncio.sleep(10)  # Wait 10 seconds between polls
-                    continue
+                if video_url:
+                    # Video is ready
+                    logger.info(f"[VIDEO POLL] Task {task_id} completed! Video URL: {video_url}")
+                    return video_url
                 else:
-                    logger.warning(f"[VIDEO POLL] Unknown status for task {task_id}: {status}")
-                    await asyncio.sleep(10)
+                    # Still processing, wait and try again
+                    logger.info(f"[VIDEO POLL] Task {task_id} still processing, waiting 10 seconds...")
+                    await asyncio.sleep(10)  # Wait 10 seconds between polls
                     continue
                     
             except Exception as e:
@@ -4327,10 +4286,19 @@ def blur_image_with_replicate(image_url: str, blur_scale: int = 150) -> Optional
             return None
         client = replicate.Client(api_token=REPLICATE_API_TOKEN)
         output = client.run("kharioki/blur-faces:bdcc18be6a02a8f2efce1a3f7489f74a1d6729caea9b53061358fe75c93799d2", input={"image": image_url, "blur_scale": blur_scale})
-        logger.info(f"[BLUR] Replicate output: {output}")
+        logger.info(f"[BLUR] Replicate output: {output} (type: {type(output)})")
+        
+        # Handle both string and FileOutput objects from Replicate
         if isinstance(output, str) and output.startswith("http"):
-            logger.info(f"[BLUR] Successfully blurred image: {output}")
+            logger.info(f"[BLUR] Successfully blurred image (string): {output}")
             return output
+        elif hasattr(output, 'url') and output.url.startswith("http"):
+            logger.info(f"[BLUR] Successfully blurred image (FileOutput): {output.url}")
+            return output.url
+        elif str(output).startswith("http"):
+            logger.info(f"[BLUR] Successfully blurred image (converted): {str(output)}")
+            return str(output)
+        
         logger.warning(f"[BLUR] Invalid output format: {type(output)} - {output}")
         return None
     except Exception as e:

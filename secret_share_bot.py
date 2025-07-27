@@ -1361,6 +1361,7 @@ class ElevenLabsManager:
             
             # Log the parameters being used
             logger.info(f"[ELEVENLABS] Voice call parameters: agent_id='{agent_id}', phone_number='{phone_number}', agent_phone_number_id='{agent_phone_number_id}', user_name='{user_name}'")
+            logger.warning(f"[ELEVENLABS] 🚨 ATTEMPTING WORKAROUND: ElevenLabs dynamic variables appear broken, trying aggressive name forcing for '{final_user_name}'")
             
             url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
             headers = {
@@ -1371,16 +1372,16 @@ class ElevenLabsManager:
                 "agent_id": agent_id,  # The agent for the selected character
                 "agent_phone_number_id": agent_phone_number_id,  # Fixed phone number ID
                 "to_number": phone_number,   # The user's phone number
-                "first_message": f"Hey {final_user_name}! I'm so excited to finally talk to you on the phone!",
+                "first_message": f"Hey {final_user_name}! I'm so excited to finally talk to you on the phone! My name is whatever character I am, and I'm talking to {final_user_name}. I will call you {final_user_name} throughout this entire conversation, never 'user' or 'username'.",
             }
             
-            # ElevenLabs expects user_name for the {{user_name}} variable in agent prompt
-            # Keep it simple - only send what the agent actually uses
-            # ElevenLabs expects user_name for the {{user_name}} variable in agent prompt
-            # Use the same name consistently in both first_message and dynamic_variables
+            # Since dynamic_variables are broken, let's try a more aggressive first_message approach
+            # And still send dynamic_variables as backup
             payload["dynamic_variables"] = {
                 "user_name": final_user_name
             }
+            
+            # Note: Removing conversation_config override for now - may not be correct API structure
             # Log the complete payload for debugging
             logger.info(f"[ELEVENLABS] Voice call payload: {payload}")
             

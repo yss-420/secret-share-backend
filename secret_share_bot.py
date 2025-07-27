@@ -1376,9 +1376,12 @@ class ElevenLabsManager:
             
             # ElevenLabs expects user_name for the {{user_name}} variable in agent prompt
             # Keep it simple - only send what the agent actually uses
+            # TESTING: Force a hardcoded name to test ElevenLabs variable substitution
+            test_name = "JACOB_TEST_NAME"
             payload["dynamic_variables"] = {
-                "user_name": final_user_name
+                "user_name": test_name
             }
+            logger.info(f"[ELEVENLABS] 🧪 TESTING: Forcing dynamic variable user_name='{test_name}' to test ElevenLabs substitution")
             # Log the complete payload for debugging
             logger.info(f"[ELEVENLABS] Voice call payload: {payload}")
             
@@ -1392,6 +1395,11 @@ class ElevenLabsManager:
                         call_id = response_data.get('callSid') or response_data.get('call_id')
                         logger.info(f"[ELEVENLABS] Voice call response data: {response_data}")
                         logger.info(f"[ELEVENLABS] Successfully initiated voice call. Call ID: {call_id}")
+                        
+                        # Debug: Log what we sent vs what we got back
+                        logger.info(f"[ELEVENLABS] 🔍 DEBUG - Sent user_name: '{final_user_name}'")
+                        logger.info(f"[ELEVENLABS] 🔍 DEBUG - Full payload sent: {payload}")
+                        
                         return call_id
                     else:
                         response_text = await response.text()

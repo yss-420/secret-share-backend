@@ -196,6 +196,204 @@ ELEVENLABS_AGENT_IDS = {
 }
 
 # --- VOICE FEATURE CONSTANTS ---
+#!/usr/bin/env python3
+"""
+Secret Share Bot - Premium Adult AI Companion
+Version 69 - ElevenLabs Voice Integration
+Critical fixes: String casting, image variation, SFW enforcement, state validation
+New features: Voice notes, voice calls, ElevenLabs v3 integration
+"""
+
+import os
+import asyncio
+import json
+import logging
+import random
+import re
+import aiohttp
+import io
+from datetime import datetime, timedelta, timezone, time
+from typing import Dict, Optional, List, Any
+from dataclasses import dataclass, field
+from collections import OrderedDict
+from dotenv import load_dotenv
+import requests
+from aiohttp import web
+import threading
+from pathlib import Path
+
+import replicate
+import elevenlabs
+from pydub import AudioSegment
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    PhotoSize
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    filters,
+    ContextTypes,
+    JobQueue,
+    PreCheckoutQueryHandler
+)
+from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown
+from telegram.error import BadRequest
+
+from supabase import create_client, Client
+
+# Configure logging with enhanced format for debugging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables from .env file (development) or environment (production)
+env_path = Path('.env')
+if env_path.exists():
+    logger.info(f"[DEBUG] Loading .env file from: {env_path.absolute()}")
+    load_dotenv()
+else:
+    logger.info(f"[DEBUG] No .env file found - using environment variables (production mode)")
+    # In production, environment variables are set directly by the platform
+
+# --- CONFIGURATION ---
+BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+KOBOLD_URL = os.getenv('KOBOLD_URL', 'http://localhost:5001/api/v1/generate')
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+REPLICATE_API_TOKEN = os.getenv('REPLICATE_API_TOKEN')
+WAVESPEED_API_TOKEN = os.getenv('WAVESPEED_API_TOKEN')
+ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
+ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
+
+# Debug logging to check environment variables
+logger.info(f"[DEBUG] Environment variables loaded:")
+logger.info(f"[DEBUG] BOT_TOKEN: {'SET' if BOT_TOKEN else 'NOT SET'}")
+logger.info(f"[DEBUG] SUPABASE_URL: {'SET' if SUPABASE_URL else 'NOT SET'}")
+logger.info(f"[DEBUG] SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_KEY else 'NOT SET'}")
+logger.info(f"[DEBUG] REPLICATE_API_TOKEN: {'SET' if REPLICATE_API_TOKEN else 'NOT SET'}")
+logger.info(f"[DEBUG] WAVESPEED_API_TOKEN: {'SET' if WAVESPEED_API_TOKEN else 'NOT SET'}")
+logger.info(f"[DEBUG] ADMIN_CHAT_ID: {'SET' if ADMIN_CHAT_ID else 'NOT SET'}")
+logger.info(f"[DEBUG] ELEVENLABS_API_KEY: {'SET' if ELEVENLABS_API_KEY else 'NOT SET'}")
+logger.info(f"[DEBUG] TWILIO_ACCOUNT_SID: {'SET' if TWILIO_ACCOUNT_SID else 'NOT SET'}")
+logger.info(f"[DEBUG] TWILIO_AUTH_TOKEN: {'SET' if TWILIO_AUTH_TOKEN else 'NOT SET'}")
+logger.info(f"[DEBUG] TWILIO_PHONE_NUMBER: {'SET' if TWILIO_PHONE_NUMBER else 'NOT SET'}")
+
+if not all([BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY, REPLICATE_API_TOKEN, WAVESPEED_API_TOKEN, ADMIN_CHAT_ID, ELEVENLABS_API_KEY]):
+    logger.error("FATAL: Missing one or more environment variables (TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, REPLICATE_API_TOKEN, WAVESPEED_API_TOKEN, ADMIN_CHAT_ID, ELEVENLABS_API_KEY).")
+    raise ValueError("Missing required environment variables! Check your .env file or environment settings.")
+
+# Initialize Supabase with connection recovery
+def create_supabase_client():
+    """Create a new Supabase client instance."""
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = create_supabase_client()
+
+async def execute_with_retry(operation, *args, max_retries=3, **kwargs):
+    """Execute a Supabase operation with retry and connection recovery."""
+    global supabase
+    
+    for attempt in range(max_retries):
+        try:
+            return operation(*args, **kwargs)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if attempt < max_retries - 1 and any(keyword in error_msg for keyword in ['disconnected', 'connection', 'timeout', 'network']):
+                logger.warning(f"[DB RETRY] Attempt {attempt + 1} failed: {e}. Recreating connection...")
+                # Recreate the Supabase client
+                supabase = create_supabase_client()
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                continue
+            else:
+                # Final attempt failed or non-connection error
+                raise e
+    return None
+
+# Initialize ElevenLabs
+
+# Test ElevenLabs API key
+def test_elevenlabs_key():
+    """Test the ElevenLabs API key."""
+    try:
+        # Try to get voices to test the API key using the new API
+        from elevenlabs.client import ElevenLabs
+        # Test ElevenLabs connection with new API
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+        # Test by getting voices (simpler test)
+        voices = client.voices.get_all()
+        logger.info("✅ ElevenLabs API key is valid!")
+        return True
+    except Exception as e:
+        logger.error(f"[DEBUG] ElevenLabs API key test failed: {e}")
+        return False
+
+# Test the API key on startup
+if ELEVENLABS_API_KEY:
+    # Set the API key as an environment variable for ElevenLabs
+    os.environ['ELEVENLABS_API_KEY'] = ELEVENLABS_API_KEY
+    test_elevenlabs_key()
+else:
+    logger.error("[DEBUG] ElevenLabs API key is not set!")
+
+# Test phone number import
+async def test_phone_number_import():
+    """Test the phone number import functionality."""
+    try:
+        from elevenlabs.client import ElevenLabs
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+        
+        # For now, just test that the API key works
+        logger.info("✅ ElevenLabs API key is valid for phone number import!")
+        return True
+    except Exception as e:
+        logger.error(f"[DEBUG] Phone number import test failed: {e}")
+        return False
+
+# --- CONSTANTS ---
+DAILY_MESSAGE_LIMIT = 50
+WELCOME_GEMS_BONUS = 100
+ACTIVE_USER_CACHE_LIMIT = 2000
+MAX_MESSAGE_LENGTH = 1024
+FREE_IMAGE_LIMIT = 12
+
+# --- ELEVENLABS VOICE MAPPING ---
+ELEVENLABS_VOICE_IDS = {
+    "isabella": "9bjVpXgvgd1TpT3tXHL8",
+    "scarlett": "Z0qZlABZILTNeODeXCuu", 
+    "aria": "U2O5xJJ6jMwqdtAI7VI4",
+    "priyanka": "qicvPeGDPufNM8uctpxv",
+    "valentina": "rMDx1aivlvWtnReBqF2L",
+    "luna": "5TLb171gsXHTKyiCAeG0",
+    "kiara": "ezWKCzemPTrGJWvylpbn",
+    "natasha": "qaEJoOC7rUxpj1zEGVun"
+}
+
+ELEVENLABS_AGENT_IDS = {
+    "isabella": "agent_01jzyr3hv3ef9afm06ptwr6np1",
+    "scarlett": "agent_01jzz6w5m3fcxake0c910wz6hx",
+    "aria": "agent_01jzz7jxg1ekra9x07a2qwfdy3", 
+    "priyanka": "agent_01jzz7wjp4fajaf1ftmren6szr",
+    "valentina": "agent_01jzz880zmfekt6pq6bnz1yvfx",
+    "luna": "agent_01jzz8nms0eeyrfr77ek4c0300",
+    "kiara": "agent_01jzz8xcvve7z9dvsh3mbkfsj4",
+    "natasha": "agent_01jzz931h8fjtvnvyjf3f8at6y"
+}
+
+# --- VOICE FEATURE CONSTANTS ---
 VOICE_NOTE_COST = 30  # gems per voice note
 VOICE_CALL_COST_PER_MINUTE = 50  # gems per minute of call
 
@@ -1675,6 +1873,13 @@ class SecretShareBot:
        if not call_id and metadata.get('phone_call', {}).get('call_sid'):
            call_id = metadata['phone_call']['call_sid']
        
+       # Debug logging for webhook processing
+       logger.info(f"[ELEVENLABS WEBHOOK DEBUG] Extracted call_id: {call_id}")
+       logger.info(f"[ELEVENLABS WEBHOOK DEBUG] Extracted duration: {duration}")
+       logger.info(f"[ELEVENLABS WEBHOOK DEBUG] Event type: {event_type}")
+       logger.info(f"[ELEVENLABS WEBHOOK DEBUG] Webhook type: {webhook_type}")
+       logger.info(f"[ELEVENLABS WEBHOOK DEBUG] Active calls: {list(self.active_calls.keys())}")
+       
        # Handle both call_ended and post_call_transcription events
        is_call_end_event = (event_type == 'call_ended') or (webhook_type == 'post_call_transcription')
        
@@ -1684,7 +1889,10 @@ class SecretShareBot:
            logger.info(f"[ELEVENLABS WEBHOOK] Call {call_id} ended via {event_source}. Duration: {duration} seconds = {duration_minutes} minutes")
            
            user_id = self.active_calls.get(call_id)
+           logger.info(f"[ELEVENLABS WEBHOOK DEBUG] User lookup for call {call_id}: {user_id}")
+           
            if user_id:
+               logger.info(f"[ELEVENLABS WEBHOOK] Processing call end for user {user_id}, call {call_id}")
                # Use centralized call end processing for consistency
                await self._process_call_end(call_id, user_id, duration_minutes, datetime.now(), 'elevenlabs_webhook')
                
@@ -1698,10 +1906,12 @@ class SecretShareBot:
                except Exception as e:
                    logger.error(f"[ELEVENLABS WEBHOOK] Failed to stop monitoring job for call {call_id}: {e}")
            else:
-               logger.warning(f"[ELEVENLABS WEBHOOK] No active user found for call {call_id}")
+               logger.warning(f"[ELEVENLABS WEBHOOK] No active user found for call {call_id}. Active calls: {self.active_calls}")
        elif call_id and is_call_end_event:
            event_source = event_type or webhook_type
            logger.warning(f"[ELEVENLABS WEBHOOK] Call {call_id} end event received but no duration found. Event: {event_source}")
+       else:
+           logger.info(f"[ELEVENLABS WEBHOOK] Ignoring webhook - not a call end event or missing data. call_id={call_id}, is_end_event={is_call_end_event}, duration={duration}")
        return web.Response(text='ok')
 
     async def _deliver_video(self, user_id, video_path_or_url):

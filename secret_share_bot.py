@@ -2573,10 +2573,12 @@ class SecretShareBot:
                     return None
                 user_session.free_images_sent += 1
                 # All users (paid and free) get blurred images every 2nd image
+                logger.info(f"[BLUR DEBUG] User {user_id} - Image #{user_session.free_images_sent}, should blur: {user_session.free_images_sent % 2 == 0}")
                 if user_session.free_images_sent % 2 == 0:
-                    blurred_url = blur_image_with_replicate(image_url, blur_scale=100)
+                    logger.info(f"[BLUR] Attempting to blur image #{user_session.free_images_sent} for user {user_id}")
+                    blurred_url = blur_image_with_replicate(image_url, blur_scale=150)
                     if blurred_url:
-                        logger.info(f"[IMAGE] Sending blurred image URL: {blurred_url}")
+                        logger.info(f"[BLUR] Successfully got blurred URL: {blurred_url}")
                         import requests
                         from io import BytesIO
                         try:
@@ -2592,11 +2594,14 @@ class SecretShareBot:
                                 caption="The image is a bit hazy... Unblur for 10 Gems?",
                                 reply_markup=reply_markup
                             )
+                            logger.info(f"[BLUR] Successfully sent blurred image to user {user_id}")
                         except Exception as e:
                             logger.error(f"[BLUR] Failed to download/re-upload blurred image: {e}")
+                            logger.error(f"[BLUR] Falling back to original image for user {user_id}")
                             await update.message.reply_photo(photo=image_url)
                     else:
                         # Fallback: send original image if blur failed
+                        logger.warning(f"[BLUR] Blur failed, sending original image to user {user_id}")
                         await update.message.reply_photo(photo=image_url)
                 else:
                     # Send unblurred image for 1st, 3rd, 5th images etc.
@@ -4314,17 +4319,22 @@ def is_voice_call_request(message: str) -> bool:
             return True
     return False
 
-def blur_image_with_replicate(image_url: str, blur_scale: int = 100) -> Optional[str]:
+def blur_image_with_replicate(image_url: str, blur_scale: int = 150) -> Optional[str]:
     try:
+        logger.info(f"[BLUR] Starting blur process for {image_url} with scale {blur_scale}")
         if not REPLICATE_API_TOKEN:
+            logger.error(f"[BLUR] No REPLICATE_API_TOKEN available")
             return None
         client = replicate.Client(api_token=REPLICATE_API_TOKEN)
         output = client.run("kharioki/blur-faces:bdcc18be6a02a8f2efce1a3f7489f74a1d6729caea9b53061358fe75c93799d2", input={"image": image_url, "blur_scale": blur_scale})
+        logger.info(f"[BLUR] Replicate output: {output}")
         if isinstance(output, str) and output.startswith("http"):
+            logger.info(f"[BLUR] Successfully blurred image: {output}")
             return output
+        logger.warning(f"[BLUR] Invalid output format: {type(output)} - {output}")
         return None
     except Exception as e:
-        logger.error(f"[BLUR] Failed: {e}")
+        logger.error(f"[BLUR] Failed to blur {image_url}: {e}")
         return None
 
 def can_upsell(user_session):

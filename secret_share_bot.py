@@ -2067,16 +2067,38 @@ class SecretShareBot:
                     if old_gems != new_gems:
                         logger.info(f"[USER_REFRESH] User {user_id} data refreshed: gems {old_gems} → {new_gems}")
                 else:
-                    # Create new session if doesn't exist
-                    self.active_users[user_id] = UserData()
-                    user_session = self.active_users[user_id]
+                    # Create new session if doesn't exist - LOAD SAVED SESSION DATA
+                    saved_session = Database.load_user_session(user_id)
+                    if saved_session:
+                        # Restore from saved session
+                        user_session = UserData()
+                        user_session.current_character = saved_session.get('current_character')
+                        user_session.current_scenario = saved_session.get('current_scenario')
+                        user_session.conversation_history = saved_session.get('conversation_history', [])
+                        user_session.user_name = saved_session.get('user_name')
+                        user_session.clothing_state = saved_session.get('clothing_state', 'clothed')
+                        user_session.character_current_outfit = saved_session.get('character_current_outfit', '')
+                        user_session.free_images_sent = saved_session.get('free_images_sent', 0)
+                        user_session.message_count_since_last_image = saved_session.get('message_count_since_last_image', 0)
+                        user_session.session_message_count = saved_session.get('session_message_count', 0)
+                        user_session.asked_for_name = saved_session.get('asked_for_name', False)
+                        if saved_session.get('last_interaction_time'):
+                            user_session.last_interaction_time = saved_session['last_interaction_time']
+                        logger.info(f"[USER_REFRESH] Restored saved session for user {user_id} (character: {user_session.current_character})")
+                    else:
+                        # No saved session, create fresh
+                        user_session = UserData()
+                        logger.info(f"[USER_REFRESH] Created fresh session for user {user_id} (no saved data)")
+                    
+                    # Update with current database values
+                    self.active_users[user_id] = user_session
                     user_session.gems = updated_user.get('gems', 0)
-                    user_session.user_name = updated_user.get('user_name')
+                    user_session.user_name = updated_user.get('user_name') or user_session.user_name
                     user_session.messages_today = updated_user.get('messages_today', 0)
                     user_session.subscription_type = updated_user.get('subscription_type')
                     user_session.last_interaction_time = datetime.now(timezone.utc)
                     
-                    logger.info(f"[USER_REFRESH] Created new session for user {user_id} with {updated_user.get('gems', 0)} gems")
+                    logger.info(f"[USER_REFRESH] Session ready for user {user_id} with {updated_user.get('gems', 0)} gems")
                 
                 return self.active_users[user_id]
             else:
@@ -2331,30 +2353,10 @@ class SecretShareBot:
         if not user_db_data:
             await update.message.reply_text("Sorry, there was a problem accessing your profile. Please try again later. 😟")
             return
-        # Only initialize user_session if it does not exist
+        # Session should already be loaded by _refresh_user_data_on_return()
         if user_id not in self.active_users:
-            logger.info(f"[SESSION INIT] Creating new session for user {user_id}")
-            # Try to load existing session from database
-            saved_session = self.db.load_user_session(user_id)
-            if saved_session:
-                # Create UserData object from saved session
-                user_session = UserData()
-                user_session.current_character = saved_session.get('current_character')
-                user_session.current_scenario = saved_session.get('current_scenario')
-                user_session.conversation_history = saved_session.get('conversation_history', [])
-                user_session.user_name = saved_session.get('user_name')
-                user_session.clothing_state = saved_session.get('clothing_state', 'clothed')
-                user_session.character_current_outfit = saved_session.get('character_current_outfit', '')
-                user_session.free_images_sent = saved_session.get('free_images_sent', 0)
-                user_session.message_count_since_last_image = saved_session.get('message_count_since_last_image', 0)
-                user_session.session_message_count = saved_session.get('session_message_count', 0)
-                user_session.asked_for_name = saved_session.get('asked_for_name', False)
-                if saved_session.get('last_interaction_time'):
-                    user_session.last_interaction_time = saved_session['last_interaction_time']
-                logger.info(f"[SESSION LOAD] Restored session for user {user_id}")
-            else:
-                user_session = UserData()
-            self.active_users[user_id] = user_session
+            logger.warning(f"[SESSION ERROR] User {user_id} missing from active_users after refresh - creating emergency session")
+            self.active_users[user_id] = UserData()
         user_session = self.active_users[user_id]
         user_session.last_interaction_time = datetime.now(timezone.utc)
         # Increment session message count for upsell logic

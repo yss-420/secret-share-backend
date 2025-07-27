@@ -1606,57 +1606,16 @@ class SecretShareBot:
            logger.info(f"[ELEVENLABS WEBHOOK] Received call event (fallback): {data}")
        call_id = data.get('call_id') or data.get('callSid')
        event_type = data.get('event_type')
-       duration = data.get('duration')
+       duration = data.get('duration')  # Duration in seconds from ElevenLabs
+       
        if call_id and event_type == 'call_ended' and duration:
-           duration_minutes = max(1, int(duration / 60))  # Always at least 1 minute
-           self.db.update_call_duration(call_id, duration_minutes)
-           logger.info(f"[ELEVENLABS WEBHOOK] Updated call {call_id} duration to {duration_minutes} minutes")
+           duration_minutes = max(1, int(duration / 60))  # Convert seconds to minutes, minimum 1 minute
+           logger.info(f"[ELEVENLABS WEBHOOK] Call {call_id} ended. Duration: {duration} seconds = {duration_minutes} minutes")
+           
            user_id = self.active_calls.get(call_id)
            if user_id:
-               # Calculate total cost based on actual call duration
-               total_cost = duration_minutes * VOICE_CALL_COST_PER_MINUTE
-               logger.info(f"[VOICE CALL] Call {call_id} ended. Duration: {duration_minutes} minutes, Cost: {total_cost} gems")
-               
-               # Get user's current gem balance
-               user_db_data = self.db.get_or_create_user(user_id, "Unknown")
-               current_gems = user_db_data.get('gems', 0) if user_db_data else 0
-               
-               # Deduct the total cost (since we didn't deduct anything upfront)
-               if current_gems >= total_cost:
-                   # User has enough gems, deduct the full amount
-                   try:
-                       supabase.table('users').update({'gems': current_gems - total_cost}).eq('telegram_id', user_id).execute()
-                       # Update the call record with actual gem cost
-                       supabase.table('voice_calls').update({'gem_cost': total_cost}).eq('call_id', call_id).execute()
-                       logger.info(f"[VOICE CALL] Deducted {total_cost} gems from user {user_id} for {duration_minutes} minute call")
-                       
-                       await self.application.bot.send_message(
-                           chat_id=user_id,
-                           text=f"💖 Your call has ended! Duration: {duration_minutes} minutes. Cost: {total_cost} Gems. Thank you for calling! 😘"
-                       )
-                   except Exception as e:
-                       logger.error(f"[VOICE CALL] Failed to deduct gems from user {user_id}: {e}")
-                       await self.application.bot.send_message(
-                           chat_id=user_id,
-                           text=f"Your call ended but there was an issue processing payment. Please contact support. Call duration: {duration_minutes} minutes."
-                       )
-               else:
-                   # User doesn't have enough gems, charge what they have
-                   gems_to_deduct = min(current_gems, total_cost)
-                   try:
-                       supabase.table('users').update({'gems': current_gems - gems_to_deduct}).eq('telegram_id', user_id).execute()
-                       # Update the call record with actual gem cost
-                       supabase.table('voice_calls').update({'gem_cost': gems_to_deduct}).eq('call_id', user_id).execute()
-                       logger.warning(f"[VOICE CALL] User {user_id} only had {current_gems} gems but call cost {total_cost}. Deducted {gems_to_deduct} gems.")
-                       
-                       await self.application.bot.send_message(
-                           chat_id=user_id,
-                           text=f"💖 Your call has ended! Duration: {duration_minutes} minutes. You were charged {gems_to_deduct} Gems (your available balance). Consider buying more Gems for longer calls! 😘"
-                       )
-                   except Exception as e:
-                       logger.error(f"[VOICE CALL] Failed to deduct gems from user {user_id}: {e}")
-                   # Clean up
-                   self.active_calls.pop(call_id, None)
+               # Use centralized call end processing for consistency
+               await self._process_call_end(call_id, user_id, duration_minutes, datetime.now(), 'elevenlabs_webhook')
                
                # Stop call monitoring job if it exists
                try:
@@ -1664,9 +1623,11 @@ class SecretShareBot:
                        current_jobs = self.application.job_queue.get_jobs_by_name(f"call_monitor_{call_id}")
                        for job in current_jobs:
                            job.schedule_removal()
-                       logger.info(f"[VOICE CALL] Stopped monitoring job for call {call_id}")
+                       logger.info(f"[ELEVENLABS WEBHOOK] Stopped monitoring job for call {call_id}")
                except Exception as e:
-                   logger.error(f"[VOICE CALL] Failed to stop monitoring job for call {call_id}: {e}")
+                   logger.error(f"[ELEVENLABS WEBHOOK] Failed to stop monitoring job for call {call_id}: {e}")
+           else:
+               logger.warning(f"[ELEVENLABS WEBHOOK] No active user found for call {call_id}")
        return web.Response(text='ok')
 
     async def _deliver_video(self, user_id, video_path_or_url):
@@ -2120,7 +2081,9 @@ class SecretShareBot:
             # If call has ended naturally or ElevenLabs API indicates it's ended, process it
             if call_status in ['ended', 'completed', 'terminated', 'finished']:
                 logger.info(f"[CALL MONITOR] Call {call_id} ended naturally. Status: {call_status}")
-                await self._process_call_end(call_id, user_id, duration_minutes, start_time, 'natural')
+                # Use precise duration calculation: minimum 1 minute billing
+                precise_duration = max(1, duration_minutes)
+                await self._process_call_end(call_id, user_id, precise_duration, start_time, 'natural')
                 context.job.schedule_removal()
                 return
             
@@ -2178,59 +2141,77 @@ class SecretShareBot:
 
     async def _process_call_end(self, call_id: str, user_id: int, duration_minutes: int, start_time: datetime, end_reason: str):
         """Process the end of a voice call: calculate cost, deduct gems, update database, notify user."""
+        
+        # Prevent duplicate processing of the same call end
+        if call_id not in self.active_calls:
+            logger.warning(f"[CALL END] Call {call_id} already processed or not found in active calls. Skipping duplicate processing.")
+            return
+            
         try:
             # Ensure minimum 1 minute billing
             actual_duration = max(1, duration_minutes)
             total_cost = actual_duration * VOICE_CALL_COST_PER_MINUTE
             
-            logger.info(f"[CALL END] Processing call {call_id} - Duration: {actual_duration} min, Cost: {total_cost} gems, Reason: {end_reason}")
+            logger.info(f"[CALL END] ==================== CALL BILLING ====================")
+            logger.info(f"[CALL END] Call ID: {call_id}")
+            logger.info(f"[CALL END] User ID: {user_id}")
+            logger.info(f"[CALL END] Raw Duration: {duration_minutes} minutes")
+            logger.info(f"[CALL END] Billing Duration: {actual_duration} minutes (minimum 1 minute)")
+            logger.info(f"[CALL END] Total Cost: {total_cost} gems ({actual_duration} × {VOICE_CALL_COST_PER_MINUTE})")
+            logger.info(f"[CALL END] End Reason: {end_reason}")
+            logger.info(f"[CALL END] Start Time: {start_time}")
             
             # Get user's current gem balance
             user_db_data = self.db.get_or_create_user(user_id, "Unknown")
             current_gems = user_db_data.get('gems', 0) if user_db_data else 0
+            logger.info(f"[CALL END] User's Current Gem Balance: {current_gems}")
             
             # Calculate gems to deduct (can't exceed current balance)
             gems_to_deduct = min(current_gems, total_cost)
             new_gem_balance = current_gems - gems_to_deduct
             
+            logger.info(f"[CALL END] Gems to Deduct: {gems_to_deduct} (min of {current_gems} current vs {total_cost} cost)")
+            logger.info(f"[CALL END] New Gem Balance: {new_gem_balance}")
+            
             # Update user's gem balance in database
             try:
                 supabase.table('users').update({'gems': new_gem_balance}).eq('telegram_id', user_id).execute()
-                logger.info(f"[CALL END] Updated user {user_id} gems: {current_gems} -> {new_gem_balance} (deducted {gems_to_deduct})")
+                logger.info(f"[CALL END] ✅ Successfully updated user {user_id} gems: {current_gems} -> {new_gem_balance} (deducted {gems_to_deduct})")
             except Exception as e:
-                logger.error(f"[CALL END] Failed to update gems for user {user_id}: {e}")
+                logger.error(f"[CALL END] ❌ Failed to update gems for user {user_id}: {e}")
             
             # Update call record with actual duration and cost
             try:
                 self.db.update_call_duration(call_id, actual_duration)
                 supabase.table('voice_calls').update({'gem_cost': gems_to_deduct}).eq('call_id', call_id).execute()
-                logger.info(f"[CALL END] Updated call {call_id} record with duration {actual_duration} min and cost {gems_to_deduct} gems")
+                logger.info(f"[CALL END] ✅ Successfully updated call {call_id} record: duration={actual_duration} min, cost={gems_to_deduct} gems")
             except Exception as e:
-                logger.error(f"[CALL END] Failed to update call record for {call_id}: {e}")
+                logger.error(f"[CALL END] ❌ Failed to update call record for {call_id}: {e}")
             
             # Remove from active calls
             self.active_calls.pop(call_id, None)
+            logger.info(f"[CALL END] Removed call {call_id} from active calls list")
             
             # Update user session gems if they're active
             if user_id in self.active_users:
                 self.active_users[user_id].gems = new_gem_balance
-                logger.info(f"[CALL END] Updated session gems for user {user_id}: {new_gem_balance}")
+                logger.info(f"[CALL END] ✅ Updated session gems for user {user_id}: {new_gem_balance}")
             
             # Send completion message to user
             if gems_to_deduct < total_cost:
                 # User didn't have enough gems for full call
-                await self.application.bot.send_message(
-                    chat_id=user_id,
-                    text=f"💖 Your call has ended! Duration: {actual_duration} minutes.\n💎 Charged: {gems_to_deduct} Gems (your available balance)\n💎 Remaining Gems: {new_gem_balance}\n\n✨ Consider buying more Gems for longer calls! 😘"
-                )
+                message = f"💖 Your call has ended! Duration: {actual_duration} minutes.\n💎 Charged: {gems_to_deduct} Gems (your available balance)\n💎 Remaining Gems: {new_gem_balance}\n\n✨ Consider buying more Gems for longer calls! 😘"
+                logger.info(f"[CALL END] Sending partial payment notification to user {user_id}")
             else:
                 # Normal completion
-                await self.application.bot.send_message(
-                    chat_id=user_id,
-                    text=f"💖 Your call has ended! Duration: {actual_duration} minutes.\n💎 Cost: {gems_to_deduct} Gems\n💎 Remaining Gems: {new_gem_balance}\n\nThank you for calling! 😘"
-                )
+                message = f"💖 Your call has ended! Duration: {actual_duration} minutes.\n💎 Cost: {gems_to_deduct} Gems\n💎 Remaining Gems: {new_gem_balance}\n\nThank you for calling! 😘"
+                logger.info(f"[CALL END] Sending full payment notification to user {user_id}")
             
-            logger.info(f"[CALL END] Successfully processed call end for {call_id}")
+            await self.application.bot.send_message(chat_id=user_id, text=message)
+            logger.info(f"[CALL END] ✅ Successfully sent billing notification to user {user_id}")
+            
+            logger.info(f"[CALL END] ================= BILLING COMPLETE =================")
+            logger.info(f"[CALL END] ✅ Successfully processed call end for {call_id}")
             
         except Exception as e:
             logger.error(f"[CALL END] Error processing call end for {call_id}: {e}")

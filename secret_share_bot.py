@@ -1354,6 +1354,11 @@ class ElevenLabsManager:
             # Use the working hardcoded phone number ID
             agent_phone_number_id = 'phnum_01k04zb68xfd9bgzqb7qpsb204'
             
+            # Always add dynamic_variables with proper name handling
+            # Ensure we NEVER use generic terms
+            final_user_name = user_name if user_name and user_name.lower() not in ['user', 'user#', 'handsome', 'bello', 'there'] else 'baby'
+            logger.info(f"[VOICE CALL] 🔍 DEBUG: user_name='{user_name}' → final_user_name='{final_user_name}'")
+            
             # Log the parameters being used
             logger.info(f"[ELEVENLABS] Voice call parameters: agent_id='{agent_id}', phone_number='{phone_number}', agent_phone_number_id='{agent_phone_number_id}', user_name='{user_name}'")
             
@@ -1368,10 +1373,6 @@ class ElevenLabsManager:
                 "to_number": phone_number,   # The user's phone number
                 "first_message": f"Hey {final_user_name}! I'm so excited to finally talk to you on the phone!",
             }
-            # Always add dynamic_variables with proper name handling
-            # Ensure we NEVER use generic terms
-            final_user_name = user_name if user_name and user_name.lower() not in ['user', 'user#', 'handsome', 'bello', 'there'] else 'baby'
-            logger.info(f"[VOICE CALL] 🔍 DEBUG: user_name='{user_name}' → final_user_name='{final_user_name}'")
             
             payload["dynamic_variables"] = {
                 "user_name": final_user_name,

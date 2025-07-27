@@ -1663,11 +1663,25 @@ class SecretShareBot:
            logger.info(f"[ELEVENLABS WEBHOOK] Received call event (fallback): {data}")
        call_id = data.get('call_id') or data.get('callSid')
        event_type = data.get('event_type')
+       webhook_type = data.get('type')  # New field for post_call_transcription
        duration = data.get('duration')  # Duration in seconds from ElevenLabs
        
-       if call_id and event_type == 'call_ended' and duration:
+       # Extract duration and call_id from metadata if available (for post_call_transcription events)
+       metadata = data.get('metadata', {})
+       if not duration and metadata.get('call_duration_secs'):
+           duration = metadata.get('call_duration_secs')
+       
+       # For post_call_transcription, call_id might be in metadata.phone_call.call_sid
+       if not call_id and metadata.get('phone_call', {}).get('call_sid'):
+           call_id = metadata['phone_call']['call_sid']
+       
+       # Handle both call_ended and post_call_transcription events
+       is_call_end_event = (event_type == 'call_ended') or (webhook_type == 'post_call_transcription')
+       
+       if call_id and is_call_end_event and duration:
            duration_minutes = max(1, int(duration / 60))  # Convert seconds to minutes, minimum 1 minute
-           logger.info(f"[ELEVENLABS WEBHOOK] Call {call_id} ended. Duration: {duration} seconds = {duration_minutes} minutes")
+           event_source = event_type or webhook_type
+           logger.info(f"[ELEVENLABS WEBHOOK] Call {call_id} ended via {event_source}. Duration: {duration} seconds = {duration_minutes} minutes")
            
            user_id = self.active_calls.get(call_id)
            if user_id:
@@ -1685,6 +1699,9 @@ class SecretShareBot:
                    logger.error(f"[ELEVENLABS WEBHOOK] Failed to stop monitoring job for call {call_id}: {e}")
            else:
                logger.warning(f"[ELEVENLABS WEBHOOK] No active user found for call {call_id}")
+       elif call_id and is_call_end_event:
+           event_source = event_type or webhook_type
+           logger.warning(f"[ELEVENLABS WEBHOOK] Call {call_id} end event received but no duration found. Event: {event_source}")
        return web.Response(text='ok')
 
     async def _deliver_video(self, user_id, video_path_or_url):

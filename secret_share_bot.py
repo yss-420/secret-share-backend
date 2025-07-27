@@ -1592,8 +1592,12 @@ class SecretShareBot:
                        logger.info(f"[TWILIO WEBHOOK] Processed call end for user {user_id}")
                    except Exception as e:
                        logger.error(f"[TWILIO WEBHOOK] Failed to process call end for user {user_id}: {e}")
+                       # Even if processing fails, stop the monitoring job
+                       await self.stop_call_monitoring(call_sid, "twilio_webhook_fallback")
                else:
                    logger.warning(f"[TWILIO WEBHOOK] No active user found for call {call_sid}")
+                   # Still stop monitoring for unknown calls
+                   await self.stop_call_monitoring(call_sid, "twilio_webhook_unknown_user")
            
            return web.Response(text='ok', status=200)
            
@@ -1607,20 +1611,43 @@ class SecretShareBot:
            # Verify webhook signature for security
            webhook_secret = os.getenv('ELEVENLABS_WEBHOOK_SECRET')
            if webhook_secret:
-               signature = request.headers.get('ElevenLabs-Signature')
-               if signature:
+               signature_header = request.headers.get('ElevenLabs-Signature')
+               if signature_header:
                    import hmac
                    import hashlib
                    body = await request.read()
-                   expected_signature = hmac.new(
-                       webhook_secret.encode('utf-8'),
-                       body,
-                       hashlib.sha256
-                   ).hexdigest()
-                   if not hmac.compare_digest(signature, expected_signature):
-                       logger.warning(f"[ELEVENLABS WEBHOOK] Invalid signature: {signature}")
-                       return web.Response(status=401, text='Invalid signature')
-                   logger.info(f"[ELEVENLABS WEBHOOK] Signature verified successfully")
+                   
+                   # Parse ElevenLabs signature format: t=timestamp,v0=signature
+                   try:
+                       timestamp = None
+                       signature = None
+                       for part in signature_header.split(','):
+                           if part.startswith('t='):
+                               timestamp = part[2:]
+                           elif part.startswith('v0='):
+                               signature = part[3:]
+                       
+                       if timestamp and signature:
+                           # Create expected signature: timestamp + body
+                           payload = f"{timestamp}.{body.decode('utf-8')}"
+                           expected_signature = hmac.new(
+                               webhook_secret.encode('utf-8'),
+                               payload.encode('utf-8'),
+                               hashlib.sha256
+                           ).hexdigest()
+                           
+                           if not hmac.compare_digest(signature, expected_signature):
+                               logger.warning(f"[ELEVENLABS WEBHOOK] Invalid signature: {signature_header}")
+                               logger.warning(f"[ELEVENLABS WEBHOOK] Expected: {expected_signature}, Got: {signature}")
+                               return web.Response(status=401, text='Invalid signature')
+                           logger.info(f"[ELEVENLABS WEBHOOK] Signature verified successfully")
+                       else:
+                           logger.warning(f"[ELEVENLABS WEBHOOK] Malformed signature header: {signature_header}")
+                           return web.Response(status=401, text='Malformed signature')
+                   except Exception as e:
+                       logger.error(f"[ELEVENLABS WEBHOOK] Signature validation error: {e}")
+                       # For now, allow webhook through if signature validation fails (development)
+                       logger.warning(f"[ELEVENLABS WEBHOOK] Allowing webhook through due to signature validation error")
                else:
                    logger.warning(f"[ELEVENLABS WEBHOOK] No signature provided")
            
@@ -2104,23 +2131,40 @@ class SecretShareBot:
                 context.job.schedule_removal()
                 return
             
-            # NEW: Check call status via ElevenLabs API to detect natural call end (skip for Twilio IDs)
-            call_status_data = await self.elevenlabs_manager.get_call_status(call_id)
-            call_status = call_status_data.get('status', '').lower()
-            
-            # If call has ended naturally or ElevenLabs API indicates it's ended, process it
-            if call_status in ['ended', 'completed', 'terminated', 'finished']:
-                logger.info(f"[CALL MONITOR] Call {call_id} ended naturally. Status: {call_status}")
-                # Use precise duration calculation: minimum 1 minute billing
-                precise_duration = max(1, duration_minutes)
-                await self._process_call_end(call_id, user_id, precise_duration, start_time, 'natural')
-                context.job.schedule_removal()
-                return
+            # Check call status - different methods for ElevenLabs vs Twilio calls
+            if call_id.startswith('CA'):
+                # Twilio call - check for stale calls (webhook may have failed)
+                if duration_minutes >= 5:  # If call has been "active" for 5+ minutes, likely ended
+                    logger.warning(f"[CALL MONITOR] Twilio call {call_id} has been active for {duration_minutes} minutes - likely ended but webhook missed. Processing end.")
+                    precise_duration = max(1, duration_minutes)
+                    await self._process_call_end(call_id, user_id, precise_duration, start_time, 'stale_detection')
+                    context.job.schedule_removal()
+                    return
+            else:
+                # ElevenLabs call - use API status check
+                call_status_data = await self.elevenlabs_manager.get_call_status(call_id)
+                call_status = call_status_data.get('status', '').lower()
+                
+                # If call has ended naturally or ElevenLabs API indicates it's ended, process it
+                if call_status in ['ended', 'completed', 'terminated', 'finished']:
+                    logger.info(f"[CALL MONITOR] ElevenLabs call {call_id} ended naturally. Status: {call_status}")
+                    precise_duration = max(1, duration_minutes)
+                    await self._process_call_end(call_id, user_id, precise_duration, start_time, 'natural')
+                    context.job.schedule_removal()
+                    return
             
             # For very short calls (less than 30 seconds), check more frequently for early termination
             if duration_minutes == 0 and duration_seconds < 30:
                 # Don't send warnings for calls under 30 seconds - they might end naturally very quickly
                 logger.info(f"[CALL MONITOR] Call {call_id} very short ({duration_seconds}s), monitoring closely")
+                return
+            
+            # For debugging: Stop monitoring if call has been running too long (failsafe)
+            if duration_minutes >= 60:  # 1 hour failsafe - no call should run this long
+                logger.error(f"[CALL MONITOR] FAILSAFE: Call {call_id} has been monitoring for {duration_minutes} minutes (1 hour limit). Force ending.")
+                precise_duration = max(1, min(duration_minutes, max_minutes))  # Cap at allocated time
+                await self._process_call_end(call_id, user_id, precise_duration, start_time, 'failsafe_timeout')
+                context.job.schedule_removal()
                 return
             
             # Check if call is approaching or exceeding the limit
@@ -2168,6 +2212,20 @@ class SecretShareBot:
             logger.error(f"[CALL MONITOR] Error monitoring call {call_id}: {e}")
             # Stop monitoring on error
             context.job.schedule_removal()
+
+    async def stop_call_monitoring(self, call_id: str, reason: str = "manual"):
+        """Manually stop call monitoring for a specific call ID."""
+        try:
+            if hasattr(self, 'application') and self.application.job_queue:
+                current_jobs = self.application.job_queue.get_jobs_by_name(f"call_monitor_{call_id}")
+                for job in current_jobs:
+                    job.schedule_removal()
+                logger.info(f"[CALL MONITOR] Manually stopped monitoring for call {call_id}. Reason: {reason}")
+                return len(current_jobs)
+            return 0
+        except Exception as e:
+            logger.error(f"[CALL MONITOR] Failed to stop monitoring for call {call_id}: {e}")
+            return 0
 
     async def _process_call_end(self, call_id: str, user_id: int, duration_minutes: int, start_time: datetime, end_reason: str):
         """Process the end of a voice call: calculate cost, deduct gems, update database, notify user."""

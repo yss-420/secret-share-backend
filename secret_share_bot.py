@@ -1366,6 +1366,7 @@ class ElevenLabsManager:
                 "agent_id": agent_id,  # The agent for the selected character
                 "agent_phone_number_id": agent_phone_number_id,  # Fixed phone number ID
                 "to_number": phone_number,   # The user's phone number
+                "first_message": f"Hey {final_user_name}! I'm so excited to finally talk to you on the phone!",
             }
             # Always add dynamic_variables with proper name handling
             # Ensure we NEVER use generic terms
@@ -1417,7 +1418,9 @@ class ElevenLabsManager:
                 "call_user_by_name": final_user_name,
                 "user_name_override": final_user_name,
                 "name_to_use": final_user_name,
-                "caller_name": final_user_name
+                "caller_name": final_user_name,
+                "system_message": f"You are talking to {final_user_name}. Always call them {final_user_name}, never 'user'.",
+                "prompt_override": f"IMPORTANT: The person you're talking to is named {final_user_name}. Use their name {final_user_name} in your responses, not 'user' or any generic term."
             }
             # Log the complete payload for debugging
             logger.info(f"[ELEVENLABS] Voice call payload: {payload}")

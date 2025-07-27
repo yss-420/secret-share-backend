@@ -2355,35 +2355,43 @@ class SecretShareBot:
                 return  # Do not send a normal chat reply
         # --- END EARLY UPSALE CHECKS ---
         # Name detection and prompt logic - ALWAYS check for name updates
-        # Check for explicit name statements that should override existing names (more conservative)
-        name_patterns = [
-            r"(?:my name is|call me|the name is|i(?:'m| am)|it's|this is|you can call me|just call me|name's)\s+([A-Za-z]{2,20})\b",
-            # Removed overly broad single-word pattern that caught words like "ok", "yes", etc.
-            r"^([A-Z][a-z]{2,19})[.,!\s]+hi$",  # Only capitalized names followed by "hi"
-            r"^([A-Z][a-z]{2,19}) here\b"      # Only capitalized names with "here"
-        ]
+        # Only try name extraction if user doesn't have a name or message looks like it contains a name
         potential_name = None
-        for pattern in name_patterns:
-            match = re.search(pattern, user_message, re.IGNORECASE)
-            if match:
-                potential_name = match.group(1).capitalize()
-                break
+        should_extract_name = (
+            not user_session.user_name or 
+            user_session.user_name in ['handsome', 'bello', 'there'] or
+            any(keyword in user_message.lower() for keyword in ['my name is', 'call me', 'i am', "i'm", 'name is'])
+        )
         
-        # Only set name if we found one OR if no name exists yet
-        if potential_name:
-            old_name = user_session.user_name
-            user_session.user_name = potential_name
-            self.db.update_user_name(user_id, user_session.user_name)
-            if old_name != potential_name:
+        if should_extract_name:
+            # Conservative name extraction patterns
+            name_patterns = [
+                r"(?:my name is|call me|the name is|i(?:'m| am)|it's|this is|you can call me|just call me|name's)\s+([A-Za-z]{2,20})\b",
+                r"^([A-Z][a-z]{2,19})[.,!\s]*hi[.,!\s]*$",  # "Jacob, hi." or "Jacob hi" 
+                r"^([A-Z][a-z]{2,19})[.,!\s]+here\b"       # "Jacob here"
+            ]
+            
+            for pattern in name_patterns:
+                match = re.search(pattern, user_message, re.IGNORECASE)
+                if match:
+                    potential_name = match.group(1).capitalize()
+                    logger.info(f"[NAME EXTRACTION] Matched pattern: '{pattern}' → Name: '{potential_name}'")
+                    break
+            
+            # Only set name if we found one OR if no name exists yet
+            if potential_name:
+                old_name = user_session.user_name
+                user_session.user_name = potential_name
+                self.db.update_user_name(user_id, user_session.user_name)
                 logger.info(f"[NAME UPDATE] ✅ User {user_id} name updated from '{old_name}' to '{potential_name}' in session and database")
-            else:
-                logger.info(f"[NAME SET] ✅ User {user_id} name set to '{potential_name}' in session and database")
-        elif not user_session.user_name:
-            # Only use placeholder if no name was found AND no name exists
-            user_session.user_name = random.choice(['handsome', 'bello', 'there'])
-            logger.info(f"[NAME PLACEHOLDER] ⚠️ No name detected in message '{user_message}', using placeholder '{user_session.user_name}' for user {user_id}")
+            elif not user_session.user_name or user_session.user_name in ['handsome', 'bello', 'there']:
+                # Only use placeholder if no name was found AND no real name exists
+                user_session.user_name = random.choice(['handsome', 'bello', 'there'])
+                logger.info(f"[NAME PLACEHOLDER] ⚠️ No name detected in message '{user_message}', using placeholder '{user_session.user_name}' for user {user_id}")
         
-        logger.info(f"[NAME EXTRACTION] User message: '{user_message}' | Extracted: '{potential_name}' | Current name: '{user_session.user_name}'")
+        # Only log name extraction for debug when actually extracting
+        if should_extract_name:
+            logger.info(f"[NAME EXTRACTION] User message: '{user_message}' | Extracted: '{potential_name}' | Current name: '{user_session.user_name}'")
         # v68: Enhanced state machine with validation
         if user_session.clothing_state == 'clothed' and any(keyword in user_message.lower() for keyword in self.image_generator.nsfw_keywords):
             if user_session.update_clothing_state('undressing'):
@@ -2530,7 +2538,7 @@ class SecretShareBot:
                 logger.info(f"[BLUR DEBUG] User {user_id} - Image #{user_session.free_images_sent}, should blur: {user_session.free_images_sent % 2 == 0}")
                 if user_session.free_images_sent % 2 == 0:
                     logger.info(f"[BLUR] Attempting to blur image #{user_session.free_images_sent} for user {user_id}")
-                    blurred_url = blur_image_with_replicate(image_url, blur_scale=500)
+                    blurred_url = blur_image_with_replicate(image_url, blur_scale=1000)
                     if blurred_url:
                         logger.info(f"[BLUR] Successfully got blurred URL: {blurred_url}")
                         import requests
@@ -4273,7 +4281,7 @@ def is_voice_call_request(message: str) -> bool:
             return True
     return False
 
-def blur_image_with_replicate(image_url: str, blur_scale: int = 500) -> Optional[str]:
+def blur_image_with_replicate(image_url: str, blur_scale: int = 1000) -> Optional[str]:
     try:
         logger.info(f"[BLUR] Starting blur process for {image_url} with scale {blur_scale}")
         if not REPLICATE_API_TOKEN:

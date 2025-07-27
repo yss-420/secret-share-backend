@@ -2010,6 +2010,12 @@ class SecretShareBot:
             
             logger.info(f"[CALL MONITOR] Call {call_id} - Duration: {duration_minutes}/{max_minutes} minutes")
             
+            # Check if call is still in our active calls list (might have ended naturally)
+            if call_id not in self.active_calls:
+                logger.info(f"[CALL MONITOR] Call {call_id} no longer active. Stopping monitor.")
+                context.job.schedule_removal()
+                return
+            
             # Check if call is approaching or exceeding the limit
             if duration_minutes >= max_minutes:
                 logger.warning(f"[CALL MONITOR] Call {call_id} reached gem limit ({duration_minutes}/{max_minutes} minutes). Terminating call.")

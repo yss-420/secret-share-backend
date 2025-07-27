@@ -72,7 +72,7 @@ else:
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 KOBOLD_URL = os.getenv('KOBOLD_URL', 'http://localhost:5001/api/v1/generate')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
 REPLICATE_API_TOKEN = os.getenv('REPLICATE_API_TOKEN')
 WAVESPEED_API_TOKEN = os.getenv('WAVESPEED_API_TOKEN')
 ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
@@ -85,7 +85,7 @@ TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
 logger.info(f"[DEBUG] Environment variables loaded:")
 logger.info(f"[DEBUG] BOT_TOKEN: {'SET' if BOT_TOKEN else 'NOT SET'}")
 logger.info(f"[DEBUG] SUPABASE_URL: {'SET' if SUPABASE_URL else 'NOT SET'}")
-logger.info(f"[DEBUG] SUPABASE_KEY: {'SET' if SUPABASE_KEY else 'NOT SET'}")
+logger.info(f"[DEBUG] SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_KEY else 'NOT SET'}")
 logger.info(f"[DEBUG] REPLICATE_API_TOKEN: {'SET' if REPLICATE_API_TOKEN else 'NOT SET'}")
 logger.info(f"[DEBUG] WAVESPEED_API_TOKEN: {'SET' if WAVESPEED_API_TOKEN else 'NOT SET'}")
 logger.info(f"[DEBUG] ADMIN_CHAT_ID: {'SET' if ADMIN_CHAT_ID else 'NOT SET'}")
@@ -95,7 +95,7 @@ logger.info(f"[DEBUG] TWILIO_AUTH_TOKEN: {'SET' if TWILIO_AUTH_TOKEN else 'NOT S
 logger.info(f"[DEBUG] TWILIO_PHONE_NUMBER: {'SET' if TWILIO_PHONE_NUMBER else 'NOT SET'}")
 
 if not all([BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY, REPLICATE_API_TOKEN, WAVESPEED_API_TOKEN, ADMIN_CHAT_ID, ELEVENLABS_API_KEY]):
-    logger.error("FATAL: Missing one or more environment variables (TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY, REPLICATE_API_TOKEN, WAVESPEED_API_TOKEN, ADMIN_CHAT_ID, ELEVENLABS_API_KEY).")
+    logger.error("FATAL: Missing one or more environment variables (TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, REPLICATE_API_TOKEN, WAVESPEED_API_TOKEN, ADMIN_CHAT_ID, ELEVENLABS_API_KEY).")
     raise ValueError("Missing required environment variables! Check your .env file or environment settings.")
 
 # Initialize Supabase

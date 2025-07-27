@@ -1432,6 +1432,28 @@ class ElevenLabsManager:
             logger.error(f"[ELEVENLABS] Error terminating call {call_id}: {e}")
             return False
 
+    async def get_call_status(self, call_id: str) -> dict:
+        """Get the status of a voice call via ElevenLabs API."""
+        try:
+            url = f"https://api.elevenlabs.io/v1/convai/calls/{call_id}"
+            headers = {
+                "xi-api-key": self.api_key,
+                "Content-Type": "application/json"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        logger.info(f"[ELEVENLABS] Call {call_id} status: {data.get('status', 'unknown')}")
+                        return data
+                    else:
+                        logger.warning(f"[ELEVENLABS] Failed to get call status for {call_id}: {response.status}")
+                        return {}
+        except Exception as e:
+            logger.error(f"[ELEVENLABS] Error getting call status for {call_id}: {e}")
+            return {}
+
 class SecretShareBot:
     """Main bot class with v69 enhancements for voice integration."""
     def __init__(self, application: Application):
@@ -2025,6 +2047,17 @@ class SecretShareBot:
                 context.job.schedule_removal()
                 return
             
+            # NEW: Check call status via ElevenLabs API to detect natural call end
+            call_status_data = await self.elevenlabs_manager.get_call_status(call_id)
+            call_status = call_status_data.get('status', '').lower()
+            
+            # If call has ended naturally, process it
+            if call_status in ['ended', 'completed', 'terminated', 'finished']:
+                logger.info(f"[CALL MONITOR] Call {call_id} ended naturally. Status: {call_status}")
+                await self._process_call_end(call_id, user_id, duration_minutes, start_time, 'natural')
+                context.job.schedule_removal()
+                return
+            
             # Check if call is approaching or exceeding the limit
             if duration_minutes >= max_minutes:
                 logger.warning(f"[CALL MONITOR] Call {call_id} reached gem limit ({duration_minutes}/{max_minutes} minutes). Terminating call.")
@@ -2035,14 +2068,14 @@ class SecretShareBot:
                     terminated = await self.elevenlabs_manager.terminate_call(call_id)
                     
                     if call_id in self.active_calls:
-                        # Send warning to user
+                        # Send termination message to user
                         await context.bot.send_message(
                             chat_id=user_id,
-                            text=f"⚠️ Your call has reached the maximum duration ({max_minutes} minutes) based on your gem balance. The call will end now to prevent overcharges."
+                            text=f"⚠️ Your call has reached the maximum duration ({max_minutes} minutes) based on your gem balance. The call has ended to prevent overcharges."
                         )
                         
-                        # Remove from active calls
-                        self.active_calls.pop(call_id, None)
+                        # Process call end
+                        await self._process_call_end(call_id, user_id, max_minutes, start_time, 'gem_limit')
                         
                         # Stop monitoring this call
                         context.job.schedule_removal()
@@ -2070,6 +2103,65 @@ class SecretShareBot:
             logger.error(f"[CALL MONITOR] Error monitoring call {call_id}: {e}")
             # Stop monitoring on error
             context.job.schedule_removal()
+
+    async def _process_call_end(self, call_id: str, user_id: int, duration_minutes: int, start_time: datetime, end_reason: str):
+        """Process the end of a voice call: calculate cost, deduct gems, update database, notify user."""
+        try:
+            # Ensure minimum 1 minute billing
+            actual_duration = max(1, duration_minutes)
+            total_cost = actual_duration * VOICE_CALL_COST_PER_MINUTE
+            
+            logger.info(f"[CALL END] Processing call {call_id} - Duration: {actual_duration} min, Cost: {total_cost} gems, Reason: {end_reason}")
+            
+            # Get user's current gem balance
+            user_db_data = self.db.get_or_create_user(user_id, "Unknown")
+            current_gems = user_db_data.get('gems', 0) if user_db_data else 0
+            
+            # Calculate gems to deduct (can't exceed current balance)
+            gems_to_deduct = min(current_gems, total_cost)
+            new_gem_balance = current_gems - gems_to_deduct
+            
+            # Update user's gem balance in database
+            try:
+                supabase.table('users').update({'gems': new_gem_balance}).eq('telegram_id', user_id).execute()
+                logger.info(f"[CALL END] Updated user {user_id} gems: {current_gems} -> {new_gem_balance} (deducted {gems_to_deduct})")
+            except Exception as e:
+                logger.error(f"[CALL END] Failed to update gems for user {user_id}: {e}")
+            
+            # Update call record with actual duration and cost
+            try:
+                self.db.update_call_duration(call_id, actual_duration)
+                supabase.table('voice_calls').update({'gem_cost': gems_to_deduct}).eq('call_id', call_id).execute()
+                logger.info(f"[CALL END] Updated call {call_id} record with duration {actual_duration} min and cost {gems_to_deduct} gems")
+            except Exception as e:
+                logger.error(f"[CALL END] Failed to update call record for {call_id}: {e}")
+            
+            # Remove from active calls
+            self.active_calls.pop(call_id, None)
+            
+            # Update user session gems if they're active
+            if user_id in self.active_users:
+                self.active_users[user_id].gems = new_gem_balance
+                logger.info(f"[CALL END] Updated session gems for user {user_id}: {new_gem_balance}")
+            
+            # Send completion message to user
+            if gems_to_deduct < total_cost:
+                # User didn't have enough gems for full call
+                await self.application.bot.send_message(
+                    chat_id=user_id,
+                    text=f"💖 Your call has ended! Duration: {actual_duration} minutes.\n💎 Charged: {gems_to_deduct} Gems (your available balance)\n💎 Remaining Gems: {new_gem_balance}\n\n✨ Consider buying more Gems for longer calls! 😘"
+                )
+            else:
+                # Normal completion
+                await self.application.bot.send_message(
+                    chat_id=user_id,
+                    text=f"💖 Your call has ended! Duration: {actual_duration} minutes.\n💎 Cost: {gems_to_deduct} Gems\n💎 Remaining Gems: {new_gem_balance}\n\nThank you for calling! 😘"
+                )
+            
+            logger.info(f"[CALL END] Successfully processed call end for {call_id}")
+            
+        except Exception as e:
+            logger.error(f"[CALL END] Error processing call end for {call_id}: {e}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Handle WebApp data from frontend

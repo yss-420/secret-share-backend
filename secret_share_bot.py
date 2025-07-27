@@ -1566,36 +1566,43 @@ class SecretShareBot:
 
     async def handle_twilio_webhook(self, request):
        """Handle Twilio webhook for call status updates."""
-       data = await request.json()
-       logger.info(f"[TWILIO WEBHOOK] Received call status update: {data}")
-       
-       # Extract call information
-       call_sid = data.get('CallSid')
-       call_status = data.get('CallStatus')
-       call_duration = data.get('CallDuration')
-       
-       if call_sid and call_status == 'completed' and call_duration:
-           # Convert duration from seconds to minutes
-           duration_minutes = int(int(call_duration) / 60)
+       try:
+           # Twilio sends form data, not JSON - parse accordingly
+           data = await request.post()
+           logger.info(f"[TWILIO WEBHOOK] Received call status update: {dict(data)}")
            
-           # Update call duration in database
-           self.db.update_call_duration(call_sid, duration_minutes)
-           logger.info(f"[TWILIO WEBHOOK] Updated call {call_sid} duration to {duration_minutes} minutes")
+           # Extract call information from form data
+           call_sid = data.get('CallSid')
+           call_status = data.get('CallStatus')
+           call_duration = data.get('CallDuration')
            
-           # Find user by call_sid and notify if needed
-           user_id = self.active_calls.get(call_sid)
-           if user_id:
-               try:
-                   await self.application.bot.send_message(
-                       chat_id=user_id,
-                       text=f"💕 Your call has ended! Duration: {duration_minutes} minutes. Thank you for calling! 😘"
-                   )
-                   # Clean up call mapping
-                   self.active_calls.pop(call_sid, None)
-               except Exception as e:
-                   logger.error(f"[TWILIO WEBHOOK] Failed to notify user {user_id}: {e}")
+           logger.info(f"[TWILIO WEBHOOK] CallSid: {call_sid}, Status: {call_status}, Duration: {call_duration}")
            
-       return web.Response(text='ok')
+           if call_sid and call_status == 'completed' and call_duration:
+               # Convert duration from seconds to minutes
+               duration_minutes = max(1, int(int(call_duration) / 60))  # Minimum 1 minute billing
+               
+               # Update call duration in database
+               self.db.update_call_duration(call_sid, duration_minutes)
+               logger.info(f"[TWILIO WEBHOOK] Updated call {call_sid} duration to {duration_minutes} minutes")
+               
+               # Find user by call_sid and process call end
+               user_id = self.active_calls.get(call_sid)
+               if user_id:
+                   try:
+                       # Use the existing call end processing logic
+                       await self._process_call_end(call_sid, user_id, duration_minutes, datetime.now(), 'twilio_webhook')
+                       logger.info(f"[TWILIO WEBHOOK] Processed call end for user {user_id}")
+                   except Exception as e:
+                       logger.error(f"[TWILIO WEBHOOK] Failed to process call end for user {user_id}: {e}")
+               else:
+                   logger.warning(f"[TWILIO WEBHOOK] No active user found for call {call_sid}")
+           
+           return web.Response(text='ok', status=200)
+           
+       except Exception as e:
+           logger.error(f"[TWILIO WEBHOOK] Error processing webhook: {e}")
+           return web.Response(text='error', status=500)
 
     async def handle_elevenlabs_webhook(self, request):
        """Handle ElevenLabs webhook for call completion events and finalize gem deduction."""

@@ -2207,31 +2207,36 @@ class SecretShareBot:
                 await self.send_premium_offer_overlay(update, context, user_id, offer_type, gem_cost, character_line=char_ack)
                 return  # Do not send a normal chat reply
         # --- END EARLY UPSALE CHECKS ---
-        # Name detection and prompt logic
-        if not user_session.user_name:
-            # Only extract the name from the user's first reply after the intro (which always asks for the name)
-            name_patterns = [
-                r"(?:my name is|call me|the name is|i(?:'m| am)|it's|this is|you can call me|just call me|name's)\s+([A-Za-z]{2,20})\b",
-                r"^([A-Za-z]{2,20})[.,!\s]*$",
-                r"^([A-Za-z]{2,20})[.,!\s]+hi$",
-                r"^([A-Za-z]{2,20}) here\b"
-            ]
-            potential_name = None
-            for pattern in name_patterns:
-                match = re.search(pattern, user_message, re.IGNORECASE)
-                if match:
-                    potential_name = match.group(1).capitalize()
-                    break
-            logger.info(f"[NAME EXTRACTION] User message: '{user_message}' | Extracted: '{potential_name}'")
-            if potential_name:
-                user_session.user_name = potential_name
-                if user_session.user_name:
-                    self.db.update_user_name(user_id, user_session.user_name)
-                logger.info(f"[NAME SET] ✅ User {user_id} name successfully set to '{potential_name}' in session and database")
+        # Name detection and prompt logic - ALWAYS check for name updates
+        # Check for explicit name statements that should override existing names
+        name_patterns = [
+            r"(?:my name is|call me|the name is|i(?:'m| am)|it's|this is|you can call me|just call me|name's)\s+([A-Za-z]{2,20})\b",
+            r"^([A-Za-z]{2,20})[.,!\s]*$",
+            r"^([A-Za-z]{2,20})[.,!\s]+hi$",
+            r"^([A-Za-z]{2,20}) here\b"
+        ]
+        potential_name = None
+        for pattern in name_patterns:
+            match = re.search(pattern, user_message, re.IGNORECASE)
+            if match:
+                potential_name = match.group(1).capitalize()
+                break
+        
+        # Only set name if we found one OR if no name exists yet
+        if potential_name:
+            old_name = user_session.user_name
+            user_session.user_name = potential_name
+            self.db.update_user_name(user_id, user_session.user_name)
+            if old_name != potential_name:
+                logger.info(f"[NAME UPDATE] ✅ User {user_id} name updated from '{old_name}' to '{potential_name}' in session and database")
             else:
-                # If the user doesn't provide a name, just use a placeholder and move on. Never prompt again.
-                user_session.user_name = random.choice(['handsome', 'bello', 'there'])
-                logger.info(f"[NAME PLACEHOLDER] ⚠️ No name detected in message '{user_message}', using placeholder '{user_session.user_name}' for user {user_id}")
+                logger.info(f"[NAME SET] ✅ User {user_id} name set to '{potential_name}' in session and database")
+        elif not user_session.user_name:
+            # Only use placeholder if no name was found AND no name exists
+            user_session.user_name = random.choice(['handsome', 'bello', 'there'])
+            logger.info(f"[NAME PLACEHOLDER] ⚠️ No name detected in message '{user_message}', using placeholder '{user_session.user_name}' for user {user_id}")
+        
+        logger.info(f"[NAME EXTRACTION] User message: '{user_message}' | Extracted: '{potential_name}' | Current name: '{user_session.user_name}'")
         # v68: Enhanced state machine with validation
         if user_session.clothing_state == 'clothed' and any(keyword in user_message.lower() for keyword in self.image_generator.nsfw_keywords):
             if user_session.update_clothing_state('undressing'):

@@ -424,14 +424,14 @@ VOICE_CALL_KEYWORDS = [
 
 # --- GEM PACKS AND SUBSCRIPTION TIERS (for payment processing) ---
 GEM_PACKS = {
-    'gems_50': 45,
-    'gems_100': 95,
-    'gems_250': 250,
-    'gems_500': 525,
+    'gems_50': 75,
+    'gems_100': 180,
+    'gems_250': 400,
+    'gems_500': 650,
     'gems_1000': 1100,
-    'gems_2500': 3000,
-    'gems_5000': 6500,
-    'gems_10000': 15000,
+    'gems_2500': 2600,
+    'gems_5000': 4200,
+    'gems_10000': 8500,
 }
 SUBSCRIPTION_TIERS = {
     'sub_essential': ('essential', 400, 450),

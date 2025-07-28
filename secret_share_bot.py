@@ -430,8 +430,8 @@ GEM_PACKS = {
     'gems_500': 525,
     'gems_1000': 1100,
     'gems_2500': 3000,
-    'gems_5000': 6500,
-    'gems_10000': 15000,
+    'gems_5000': 4200,
+    'gems_10000': 8500,
 }
 SUBSCRIPTION_TIERS = {
     'sub_essential': ('essential', 400, 450),

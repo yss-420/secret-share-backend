@@ -3795,7 +3795,7 @@ class SecretShareBot:
         ])
         
         # Add the App button that opens your frontend
-        keyboard.append([InlineKeyboardButton("🌐 Open Web Store", web_app={"url": "https://secret-share.com/gem-store"})])
+        keyboard.append([InlineKeyboardButton("🌐 Open Web Store", web_app={"url": "https://secret-share.com/store"})])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -4080,45 +4080,61 @@ class SecretShareBot:
             if action == 'buy_gems':
                 package_type = data.get('package')
                 
-                # Validate package
-                if package_type not in GEM_PACKS:
-                    await update.message.reply_text("❌ Invalid gem package selected.")
+                # Validate package (gems or subscription)
+                if package_type not in GEM_PACKS and package_type not in SUBSCRIPTION_TIERS:
+                    await update.message.reply_text("❌ Invalid package selected.")
                     return
                 
-                # Get package details
-                gem_amount = GEM_PACKS[package_type]
-                star_prices = {
-                    'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
-                    'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
-                }
-                stars = star_prices.get(package_type, 0)
+                # Handle gem packs
+                if package_type in GEM_PACKS:
+                    gem_amount = GEM_PACKS[package_type]
+                    star_prices = {
+                        'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
+                        'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
+                    }
+                    stars = star_prices.get(package_type, 0)
+                    
+                    await context.bot.send_invoice(
+                        chat_id=user_id,
+                        title=f"{gem_amount} Gems",
+                        description=f"Purchase {gem_amount} Gems for premium features",
+                        payload=package_type,
+                        provider_token="",
+                        currency="XTR",
+                        prices=[{'label': f'{gem_amount} Gems', 'amount': stars}],
+                        need_name=False,
+                        need_phone_number=False,
+                        need_email=False,
+                        is_flexible=False
+                    )
+                    
+                    await update.message.reply_text(
+                        f"💫 Invoice sent for {gem_amount} Gems ({stars} Stars)\n"
+                        f"Complete the payment to add gems to your account!"
+                    )
                 
-                # Send invoice for Telegram Stars payment
-                title = f"{gem_amount} Gems"
-                description = f"Purchase {gem_amount} Gems for premium features"
-                payload = package_type
-                provider_token = ""  # Empty for Telegram Stars
-                currency = "XTR"
-                prices = [{'label': f'{gem_amount} Gems', 'amount': stars}]
-                
-                await context.bot.send_invoice(
-                    chat_id=user_id,
-                    title=title,
-                    description=description,
-                    payload=payload,
-                    provider_token=provider_token,
-                    currency=currency,
-                    prices=prices,
-                    need_name=False,
-                    need_phone_number=False,
-                    need_email=False,
-                    is_flexible=False
-                )
-                
-                await update.message.reply_text(
-                    f"💫 Invoice sent for {gem_amount} Gems ({stars} Stars)\n"
-                    f"Complete the payment to add gems to your account!"
-                )
+                # Handle subscriptions  
+                elif package_type in SUBSCRIPTION_TIERS:
+                    tier_name, stars, monthly_gems = SUBSCRIPTION_TIERS[package_type]
+                    
+                    await context.bot.send_invoice(
+                        chat_id=user_id,
+                        title=f"{tier_name.title()} Subscription",
+                        description=f"Monthly {tier_name.title()} subscription: Unlimited messages + {monthly_gems} Gems/month",
+                        payload=package_type,
+                        provider_token="",
+                        currency="XTR",
+                        prices=[{'label': f'{tier_name.title()} Monthly', 'amount': stars}],
+                        need_name=False,
+                        need_phone_number=False,
+                        need_email=False,
+                        is_flexible=False
+                    )
+                    
+                    await update.message.reply_text(
+                        f"✨ Invoice sent for {tier_name.title()} subscription ({stars} Stars)\n"
+                        f"Enjoy unlimited messages and {monthly_gems} monthly gems!"
+                    )
                 
             else:
                 await update.message.reply_text(f"❌ Unknown action: {action}")
@@ -4712,6 +4728,7 @@ def main():
     application.add_handler(CallbackQueryHandler(bot.premium_offer_callback, pattern="^premium_yes\|"))
     application.add_handler(CallbackQueryHandler(bot.unblur_image_callback, pattern="^unblur_image$"))
     application.add_handler(CallbackQueryHandler(bot.handle_payment_callback, pattern="^buy_"))
+    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, bot.handle_webapp_data))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     job_queue = application.job_queue
     if job_queue:

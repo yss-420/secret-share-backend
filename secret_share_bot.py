@@ -424,19 +424,19 @@ VOICE_CALL_KEYWORDS = [
 
 # --- GEM PACKS AND SUBSCRIPTION TIERS (for payment processing) ---
 GEM_PACKS = {
-    'gems_50': 45,
-    'gems_100': 95,
+    'gems_50': 50,
+    'gems_100': 100,
     'gems_250': 250,
-    'gems_500': 525,
-    'gems_1000': 1100,
-    'gems_2500': 2600,
-    'gems_5000': 4200,
-    'gems_10000': 8500,
+    'gems_500': 500,
+    'gems_1000': 1000,
+    'gems_2500': 2500,
+    'gems_5000': 5000,
+    'gems_10000': 10000,
 }
 SUBSCRIPTION_TIERS = {
-    'sub_essential': ('essential', 400, 450),
-    'sub_plus': ('plus', 800, 1200),
-    'sub_premium': ('premium', 1600, 2500),
+    'sub_essential': ('essential', 500, 450),
+    'sub_plus': ('plus', 1000, 1200),
+    'sub_premium': ('premium', 2000, 2500),
 }
 
 # Upsell probabilities (40% video, 30% voice note, 30% voice call)
@@ -3839,8 +3839,8 @@ class SecretShareBot:
                 gem_amount = GEM_PACKS[pack_key]
                 # Get star price from the predefined mapping
                 star_prices = {
-                    'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
-                    'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
+                    'gems_50': 100, 'gems_100': 200, 'gems_250': 400, 'gems_500': 750,
+                    'gems_1000': 1500, 'gems_2500': 4000, 'gems_5000': 7500, 'gems_10000': 10000
                 }
                 stars = star_prices.get(pack_key, 0)
                 
@@ -4112,8 +4112,8 @@ class SecretShareBot:
             if package_type in GEM_PACKS:
                 gem_amount = GEM_PACKS[package_type]
                 star_prices = {
-                    'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
-                    'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
+                    'gems_50': 100, 'gems_100': 200, 'gems_250': 400, 'gems_500': 750,
+                    'gems_1000': 1500, 'gems_2500': 4000, 'gems_5000': 7500, 'gems_10000': 10000
                 }
                 stars = star_prices.get(package_type, 0)
                 
@@ -4227,8 +4227,8 @@ class SecretShareBot:
                 if package_type in GEM_PACKS:
                     gem_amount = GEM_PACKS[package_type]
                     star_prices = {
-                        'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
-                        'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
+                        'gems_50': 100, 'gems_100': 200, 'gems_250': 400, 'gems_500': 750,
+                        'gems_1000': 1500, 'gems_2500': 4000, 'gems_5000': 7500, 'gems_10000': 10000
                     }
                     stars = star_prices.get(package_type, 0)
                     
@@ -4311,8 +4311,8 @@ class SecretShareBot:
                 # Gem package
                 gem_amount = GEM_PACKS[package_type]
                 star_prices = {
-                    'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
-                    'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
+                    'gems_50': 100, 'gems_100': 200, 'gems_250': 400, 'gems_500': 750,
+                    'gems_1000': 1500, 'gems_2500': 4000, 'gems_5000': 7500, 'gems_10000': 10000
                 }
                 stars = star_prices.get(package_type, 0)
                 

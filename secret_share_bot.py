@@ -3960,8 +3960,8 @@ class SecretShareBot:
             # Validate payment amount matches expected price
             if payload in GEM_PACKS:
                 expected_price = {
-                    'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
-                    'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
+                    'gems_50': 100, 'gems_100': 200, 'gems_250': 400, 'gems_500': 750,
+                    'gems_1000': 1500, 'gems_2500': 4000, 'gems_5000': 7500, 'gems_10000': 10000
                 }.get(payload)
             elif payload in SUBSCRIPTION_TIERS:
                 expected_price = SUBSCRIPTION_TIERS[payload][1]  # stars amount

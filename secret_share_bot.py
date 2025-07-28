@@ -1742,6 +1742,8 @@ class SecretShareBot:
              web.post('/api/twilio-webhook', self.handle_twilio_webhook),
              web.post('/api/elevenlabs-webhook', self.handle_elevenlabs_webhook),
              web.post('/api/initiate-payment', self.handle_payment_request),
+             web.post('/api/create-invoice', self.create_invoice_link),
+             web.options('/api/create-invoice', self.handle_cors_options),
          ])
        self.webhook_thread = threading.Thread(target=self._run_webhook_server, daemon=True)
        self.webhook_thread.start()
@@ -4065,6 +4067,142 @@ class SecretShareBot:
         results_text += f"⚡ Performance: {'✅ Good' if 'Network timing normal' in results_text else '⚠️ Slow'}"
         
         await update.message.reply_text(results_text, parse_mode=ParseMode.MARKDOWN)
+
+    async def handle_cors_options(self, request):
+        """Handle CORS preflight requests for frontend API calls."""
+        return web.Response(
+            headers={
+                'Access-Control-Allow-Origin': 'https://secret-share.com',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-User-ID'
+            }
+        )
+
+    async def create_invoice_link(self, request):
+        """Create Telegram Stars invoice link for frontend payments."""
+        try:
+            # CORS headers
+            cors_headers = {
+                'Access-Control-Allow-Origin': 'https://secret-share.com',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-User-ID'
+            }
+            
+            # Parse request
+            data = await request.json()
+            user_id = data.get('user_id')
+            package_type = data.get('package_type')
+            
+            if not user_id or not package_type:
+                return web.Response(
+                    status=400, 
+                    text=json.dumps({'error': 'Missing user_id or package_type'}),
+                    headers={**cors_headers, 'Content-Type': 'application/json'}
+                )
+            
+            # Validate package
+            if package_type not in GEM_PACKS and package_type not in SUBSCRIPTION_TIERS:
+                return web.Response(
+                    status=400,
+                    text=json.dumps({'error': 'Invalid package_type'}),
+                    headers={**cors_headers, 'Content-Type': 'application/json'}
+                )
+            
+            # Create invoice using Telegram Bot API
+            if package_type in GEM_PACKS:
+                gem_amount = GEM_PACKS[package_type]
+                star_prices = {
+                    'gems_50': 50, 'gems_100': 100, 'gems_250': 250, 'gems_500': 500,
+                    'gems_1000': 1000, 'gems_2500': 2500, 'gems_5000': 5000, 'gems_10000': 10000
+                }
+                stars = star_prices.get(package_type, 0)
+                
+                # Create invoice link using createInvoiceLink API
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://api.telegram.org/bot{BOT_TOKEN}/createInvoiceLink"
+                    invoice_data = {
+                        "title": f"{gem_amount} Gems",
+                        "description": f"Purchase {gem_amount} Gems for premium features",
+                        "payload": package_type,
+                        "provider_token": "",  # Empty for Telegram Stars
+                        "currency": "XTR",
+                        "prices": [{"label": f"{gem_amount} Gems", "amount": stars}]
+                    }
+                    
+                    async with session.post(url, json=invoice_data) as response:
+                        result = await response.json()
+                        
+                        if result.get('ok'):
+                            invoice_url = result['result']
+                            return web.Response(
+                                text=json.dumps({
+                                    'success': True,
+                                    'invoice_url': invoice_url,
+                                    'package_type': package_type,
+                                    'gem_amount': gem_amount,
+                                    'stars': stars
+                                }),
+                                headers={**cors_headers, 'Content-Type': 'application/json'}
+                            )
+                        else:
+                            logger.error(f"[INVOICE] Telegram API error: {result}")
+                            return web.Response(
+                                status=500,
+                                text=json.dumps({'error': 'Failed to create invoice'}),
+                                headers={**cors_headers, 'Content-Type': 'application/json'}
+                            )
+            
+            elif package_type in SUBSCRIPTION_TIERS:
+                tier_name, stars, monthly_gems = SUBSCRIPTION_TIERS[package_type]
+                
+                # Create subscription invoice link
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://api.telegram.org/bot{BOT_TOKEN}/createInvoiceLink"
+                    invoice_data = {
+                        "title": f"{tier_name.title()} Subscription",
+                        "description": f"Monthly {tier_name.title()} subscription: Unlimited messages + {monthly_gems} Gems/month",
+                        "payload": package_type,
+                        "provider_token": "",
+                        "currency": "XTR",
+                        "prices": [{"label": f"{tier_name.title()} Monthly", "amount": stars}]
+                    }
+                    
+                    async with session.post(url, json=invoice_data) as response:
+                        result = await response.json()
+                        
+                        if result.get('ok'):
+                            invoice_url = result['result']
+                            return web.Response(
+                                text=json.dumps({
+                                    'success': True,
+                                    'invoice_url': invoice_url,
+                                    'package_type': package_type,
+                                    'tier_name': tier_name,
+                                    'monthly_gems': monthly_gems,
+                                    'stars': stars
+                                }),
+                                headers={**cors_headers, 'Content-Type': 'application/json'}
+                            )
+                        else:
+                            logger.error(f"[INVOICE] Telegram API error: {result}")
+                            return web.Response(
+                                status=500,
+                                text=json.dumps({'error': 'Failed to create subscription invoice'}),
+                                headers={**cors_headers, 'Content-Type': 'application/json'}
+                            )
+            
+        except Exception as e:
+            logger.error(f"[INVOICE] Error creating invoice: {e}")
+            return web.Response(
+                status=500,
+                text=json.dumps({'error': 'Internal server error'}),
+                headers={
+                    'Access-Control-Allow-Origin': 'https://secret-share.com',
+                    'Content-Type': 'application/json'
+                }
+            )
 
     async def handle_webapp_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle data sent from Telegram WebApp (your frontend)"""

@@ -4876,7 +4876,11 @@ def main():
 
     async def post_init(app: Application) -> None:
         await bot.kobold_api.start_session()
-        bot.kobold_available = await bot.kobold_api.check_availability()
+        try:
+            bot.kobold_available = await bot.kobold_api.check_availability()
+        except Exception as e:
+            logger.warning(f"[INIT] Kobold API not available: {e}")
+            bot.kobold_available = False
         if bot.kobold_available:
             logger.info("✅ KoboldCPP is running and connected!")
         else:

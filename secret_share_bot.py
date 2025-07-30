@@ -451,7 +451,7 @@ WAVESPEED_ACTION_LORA_MAP = {
     "style_general_nsfw": {
         "keywords_to_detect": ["undress", "strip", "get naked", "take it off", "take off your clothes", "show me", "get nude", "undressing", "stripping", "nude", "naked", "show me your body"],
         "lora_triggers": ["nsfwsks"],
-        "lora_url": "https://pub-abb95480c2e649289a37a1732a0d06c2.r2.dev/style_general_nsfw.safetensors"
+        "lora_url": f"{os.getenv('LORA_CDN_URL', 'https://pub-abb95480c2e649289a37a1732a0d06c2.r2.dev')}/style_general_nsfw.safetensors"
     },
     "bouncing_boobs": {
         "keywords_to_detect": ["bounce", "bouncing", "jiggle", "jiggling", "boobs", "tits", "breasts", "show me them bounce", "let me see those boobs", "show me your boobs", "show tits", "show me your tits", "make them jiggle"],
@@ -1330,7 +1330,7 @@ class VideoGenerator:
     def __init__(self, api_token: str):
         self.api_token = api_token
         # Wavespeed API endpoint
-        self.wavespeed_api_url = "https://api.wavespeed.ai/api/v3/wavespeed-ai/wan-2.1/i2v-480p-lora"
+        self.wavespeed_api_url = os.getenv('WAVESPEED_API_URL', 'https://api.wavespeed.ai/api/v3/wavespeed-ai/wan-2.1/i2v-480p-lora')
 
     async def submit_video_task(self, image_url: str, prompt: str, lora_url: Optional[str] = None) -> Optional[str]:
         """
@@ -2635,7 +2635,7 @@ class SecretShareBot:
             logger.info(f"[MESSAGE LIMIT] Free user {user_id}: {messages_today}/{DAILY_MESSAGE_LIMIT} messages today")
             
             if messages_today >= DAILY_MESSAGE_LIMIT:
-                keyboard = [[InlineKeyboardButton("✨ Upgrade Now", web_app={"url": "https://secret-share.com"})]]
+                keyboard = [[InlineKeyboardButton("✨ Upgrade Now", web_app={"url": os.getenv('FRONTEND_URL', 'https://secret-share.com')})]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.message.reply_text(
                     "You've reached your daily free message limit! ✨ To continue our conversation without interruption, you can get a subscription for unlimited access and monthly Gems. Tap below to see the options.",
@@ -3436,18 +3436,18 @@ class SecretShareBot:
            logger.error(f"[TEST PHONE] Error: {e}")
 
     async def store(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-       """Gem store command - opens the Telegram Mini App."""
-       user_id = update.effective_user.id
-       
-       # Get user's current gem balance
-       user_db_data = self.db.get_or_create_user(user_id, getattr(update.effective_user, 'username', 'Unknown'))
-       gems = user_db_data.get('gems', 0) if user_db_data else 0
-               
-       # Create store button
-       keyboard = [[InlineKeyboardButton("💎 Gem Store", web_app={"url": "https://secret-share.com"})]]
-       reply_markup = InlineKeyboardMarkup(keyboard)
-       
-       await update.message.reply_text(
+        """Gem store command - opens the Telegram Mini App."""
+        user_id = update.effective_user.id
+        
+        # Get user's current gem balance
+        user_db_data = self.db.get_or_create_user(user_id, getattr(update.effective_user, 'username', 'Unknown'))
+        gems = user_db_data.get('gems', 0) if user_db_data else 0
+        
+        # Create store button
+        keyboard = [[InlineKeyboardButton("💎 Gem Store", web_app={"url": os.getenv('FRONTEND_URL', 'https://secret-share.com')})]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
            f"Welcome to the Gem Store! 💎\n\n"
            f"Your current balance: **{gems} Gems**\n\n"
            f"Click the button below to upgrade your account and unlock premium features!",
@@ -3745,177 +3745,9 @@ class SecretShareBot:
         # Always reset premium_offer_state at the end so user can make another request
         user_session.premium_offer_state = {}
 
-    async def buygems(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Complete gem store with all gem packs and subscription options."""
-        if update.effective_chat.type != 'private':
-            await update.message.reply_text("Purchases are only available in private chat.")
-            return
-        
-        # Create inline keyboard with all options
-        keyboard = []
-        
-        # Gem Packs Section
-        keyboard.append([InlineKeyboardButton("💎 GEM PACKS 💎", callback_data="gem_header")])
-        
-        # Row 1: Small packs
-        keyboard.append([
-            InlineKeyboardButton("45 Gems - 50⭐", callback_data="buy_gems_50"),
-            InlineKeyboardButton("95 Gems - 100⭐", callback_data="buy_gems_100")
-        ])
-        
-        # Row 2: Medium packs  
-        keyboard.append([
-            InlineKeyboardButton("250 Gems - 250⭐", callback_data="buy_gems_250"),
-            InlineKeyboardButton("525 Gems - 500⭐", callback_data="buy_gems_500")
-        ])
-        
-        # Row 3: Large packs
-        keyboard.append([
-            InlineKeyboardButton("1,100 Gems - 1000⭐", callback_data="buy_gems_1000"),
-            InlineKeyboardButton("3,000 Gems - 2500⭐", callback_data="buy_gems_2500")
-        ])
-        
-        # Row 4: Mega packs
-        keyboard.append([
-            InlineKeyboardButton("6,500 Gems - 5000⭐", callback_data="buy_gems_5000"),
-            InlineKeyboardButton("15,000 Gems - 10000⭐", callback_data="buy_gems_10000")
-        ])
-        
-        # Subscription Section
-        keyboard.append([InlineKeyboardButton("✨ MONTHLY SUBSCRIPTIONS ✨", callback_data="sub_header")])
-        
-        keyboard.append([
-            InlineKeyboardButton("Essential (450 Gems/mo) - 400⭐", callback_data="buy_sub_essential"),
-        ])
-        
-        keyboard.append([
-            InlineKeyboardButton("Plus (1,200 Gems/mo) - 800⭐", callback_data="buy_sub_plus"),
-        ])
-        
-        keyboard.append([
-            InlineKeyboardButton("Premium (2,500 Gems/mo) - 1600⭐", callback_data="buy_sub_premium"),
-        ])
-        
-        # Add the App button that opens your frontend
-        keyboard.append([InlineKeyboardButton("🌐 Open Web Store", web_app={"url": "https://secret-share.com/store"})])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "💎✨ **PREMIUM STORE** ✨💎\n\n"
-            "**GEM PACKS** 💎\n"
-            "• Use gems for images, videos, voice notes & calls\n"
-            "• Bigger packs = better value!\n\n"
-            "**SUBSCRIPTIONS** ✨\n"
-            "• **Unlimited messages** (no daily limit)\n"
-            "• Monthly gem allowance\n"
-            "• Premium features\n\n"
-            "**APP** 📱\n"
-            "• Full store experience in your frontend\n\n"
-            "Choose your package below:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+    # REMOVED: /buygems command - all purchases now go through Mini App store only
 
-    async def handle_payment_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle payment button callbacks and send invoices."""
-        query = update.callback_query
-        await query.answer()
-        
-        user_id = query.from_user.id
-        callback_data = query.data
-        
-        # Ignore header buttons
-        if callback_data in ["gem_header", "sub_header"]:
-            return
-        
-        # Parse callback data
-        if callback_data.startswith("buy_gems_"):
-            # Gem pack purchase
-            pack_size = callback_data.replace("buy_gems_", "")
-            pack_key = f"gems_{pack_size}"
-            
-            if pack_key in GEM_PACKS:
-                gem_amount = GEM_PACKS[pack_key]
-                # Get star price from the predefined mapping
-                star_prices = {
-                    'gems_50': 100, 'gems_100': 200, 'gems_250': 400, 'gems_500': 750,
-                    'gems_1000': 1500, 'gems_2500': 4000, 'gems_5000': 7500, 'gems_10000': 10000
-                }
-                stars = star_prices.get(pack_key, 0)
-                
-                await self._send_gem_invoice(query, pack_key, gem_amount, stars)
-                
-        elif callback_data.startswith("buy_sub_"):
-            # Subscription purchase
-            tier = callback_data.replace("buy_sub_", "")
-            sub_key = f"sub_{tier}"
-            
-            if sub_key in SUBSCRIPTION_TIERS:
-                tier_name, stars, monthly_gems = SUBSCRIPTION_TIERS[sub_key]
-                await self._send_subscription_invoice(query, sub_key, tier_name, stars, monthly_gems)
-
-    # Duplicate methods removed - kept original versions below
-
-    async def _send_gem_invoice(self, query, pack_key: str, gem_amount: int, stars: int):
-        """Send invoice for gem pack purchase."""
-        try:
-            title = f"{gem_amount} Gems"
-            description = f"Purchase {gem_amount} Gems for premium features like images, videos, and voice calls."
-            payload = pack_key
-            provider_token = ""  # Empty for Telegram Stars
-            currency = "XTR"
-            prices = [{'label': f'{gem_amount} Gems', 'amount': stars}]
-            
-            await self.application.bot.send_invoice(
-                chat_id=query.message.chat_id,
-            title=title,
-            description=description,
-            payload=payload,
-            provider_token=provider_token,
-            currency=currency,
-            prices=prices,
-            need_name=False,
-            need_phone_number=False,
-            need_email=False,
-            is_flexible=False
-        )
-            
-            await query.edit_message_text(f"💎 Invoice sent for {gem_amount} Gems ({stars} Stars)")
-            
-        except Exception as e:
-            logger.error(f"[PAYMENT] Error sending gem invoice: {e}")
-            await query.edit_message_text("❌ Error creating invoice. Please try again.")
-
-    async def _send_subscription_invoice(self, query, sub_key: str, tier_name: str, stars: int, monthly_gems: int):
-        """Send invoice for subscription purchase."""
-        try:
-            title = f"{tier_name.title()} Subscription"
-            description = f"Monthly {tier_name.title()} subscription: Unlimited messages + {monthly_gems} Gems/month"
-            payload = sub_key
-            provider_token = ""  # Empty for Telegram Stars
-            currency = "XTR"
-            prices = [{'label': f'{tier_name.title()} Monthly', 'amount': stars}]
-            
-            await self.application.bot.send_invoice(
-                chat_id=query.message.chat_id,
-                title=title,
-                description=description,
-                payload=payload,
-                provider_token=provider_token,
-                currency=currency,
-                prices=prices,
-                need_name=False,
-                need_phone_number=False,
-                need_email=False,
-                is_flexible=False
-            )
-            
-            await query.edit_message_text(f"✨ Invoice sent for {tier_name.title()} subscription ({stars} Stars)")
-            
-        except Exception as e:
-            logger.error(f"[PAYMENT] Error sending subscription invoice: {e}")
-            await query.edit_message_text("❌ Error creating subscription invoice. Please try again.")
+    # REMOVED: handle_payment_callback and related invoice functions - all payments now go through Mini App
 
     def validate_telegram_webhook(self, request_data: str, signature: str) -> bool:
         """Validate Telegram webhook signature for security."""
@@ -4850,7 +4682,7 @@ def main():
     application.add_handler(CommandHandler("testphone", bot.testphone))
     application.add_handler(CommandHandler("testpayments", bot.test_payment_edge_cases))
     application.add_handler(CommandHandler("store", bot.store))
-    application.add_handler(CommandHandler("buygems", bot.buygems))
+    # REMOVED: buygems command handler - all purchases go through Mini App
     application.add_handler(CommandHandler("terms", bot.terms))
     application.add_handler(CommandHandler("support", bot.support))
     application.add_handler(CommandHandler("status", bot.status))
@@ -4865,7 +4697,7 @@ def main():
     application.add_handler(CallbackQueryHandler(bot.main_menu_callback, pattern="^back_to_chars$"))
     application.add_handler(CallbackQueryHandler(bot.premium_offer_callback, pattern="^premium_yes\|"))
     application.add_handler(CallbackQueryHandler(bot.unblur_image_callback, pattern="^unblur_image$"))
-    application.add_handler(CallbackQueryHandler(bot.handle_payment_callback, pattern="^buy_"))
+    # REMOVED: inline payment callback handler - all payments go through Mini App
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, bot.handle_webapp_data))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     job_queue = application.job_queue

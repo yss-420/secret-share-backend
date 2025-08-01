@@ -3070,6 +3070,17 @@ class SecretShareBot:
        
        await query.delete_message()
 
+       # Send premium features introduction message in bold
+       premium_intro_text = "*✨ A little secret... Want to take things to the next level? I respond to your desires. Try asking for a video or to hear my voice. Sometimes, I might even offer you something special myself... if you're lucky.*"
+       await context.bot.send_message(
+           chat_id=user_id, 
+           text=premium_intro_text, 
+           parse_mode=ParseMode.MARKDOWN
+       )
+       
+       # 2-second pause for users to read the premium features message
+       await asyncio.sleep(2)
+
        background_image_url = scenario.get("background_image_url")
        intro_text = f"_{scenario['intro_text']}_"
        if background_image_url:

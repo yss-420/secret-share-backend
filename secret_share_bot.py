@@ -1150,9 +1150,9 @@ class KoboldAPI:
         if not self.session or self.session.closed:
             raise RuntimeError("API session is not started or has been closed.")
         payload = {
-            "prompt": prompt, "max_length": max_tokens, "temperature": 0.6,
+            "prompt": prompt, "max_length": max_tokens, "temperature": 0.65,
             "top_p": 0.9, "min_p": 0.05, "rep_pen": 1.1,
-            "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:"]
+            "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:", "*giggles*", "*blushes*", "\n*"]
         }
         try:
             async with self.session.post(self.base_url, json=payload, timeout=90) as response:
@@ -2802,7 +2802,7 @@ class SecretShareBot:
 
             raw_bot_response = ""
             if self.kobold_available:
-                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=100)
+                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=60)
             else:
                 raw_bot_response = "*I sigh softly.* My thoughts are a bit hazy right now... I can't seem to connect. Please try again in a little while."
 

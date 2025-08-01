@@ -2644,7 +2644,9 @@ class SecretShareBot:
                 logger.info(f"[MESSAGE LIMIT] ❌ Blocked free user {user_id} at {messages_today} messages")
                 return
         user_session.message_count_since_last_image += 1
-        await context.bot.send_chat_action(chat_id=user_id, action="typing")
+        
+        # Start persistent typing indicator (will refresh every 4 seconds)
+        typing_task = await self._start_persistent_typing(user_id, context)
         # --- EARLY UPSALE CHECKS (move all upsell logic here, before AI response) ---
         # Prevent back-to-back upsells
         now = datetime.now(timezone.utc)
@@ -2824,6 +2826,9 @@ class SecretShareBot:
 
             if final_response:
                 await update.message.reply_text(final_response)
+            
+            # Cancel typing indicator whether response was sent or not
+            typing_task.cancel()
 
             user_session.conversation_history.append({"role": "user", "content": user_message})
             if final_response:
@@ -2854,6 +2859,12 @@ class SecretShareBot:
         except Exception as e:
             logger.error(f"Error in handle_message for user {user_id}: {e}", exc_info=True)
             await update.message.reply_text("Oh, my... I seem to have gotten my thoughts all tangled up. Could you say that again? 💕")
+            # Cancel typing indicator on error as well (if it was started)
+            try:
+                typing_task.cancel()
+            except NameError:
+                # typing_task wasn't created yet (early return happened)
+                pass
 
     async def _generate_and_send_image(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_message: Optional[str] = None) -> Optional[str]:
         """
@@ -3456,6 +3467,26 @@ class SecretShareBot:
        )
 
     # Add this async helper function inside SecretShareBot
+    async def _start_persistent_typing(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> asyncio.Task:
+        """
+        Starts a background task that periodically sends typing action to keep indicator alive.
+        Returns the task so it can be cancelled when response is ready.
+        """
+        async def typing_loop():
+            try:
+                while True:
+                    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+                    await asyncio.sleep(4)  # Refresh every 4 seconds (before 5-second timeout)
+            except asyncio.CancelledError:
+                # Task was cancelled - this is expected when response is ready
+                pass
+            except Exception as e:
+                logger.warning(f"[TYPING] Error in persistent typing for user {chat_id}: {e}")
+        
+        # Start the background task
+        task = asyncio.create_task(typing_loop())
+        return task
+
     async def generate_upsell_line(self, user_session, offer_type, user_message=None):
        character = CHARACTERS[user_session.current_character]
        user_name = user_session.user_name or random.choice(['handsome', 'bello', 'there'])

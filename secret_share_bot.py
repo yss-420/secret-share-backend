@@ -3458,18 +3458,18 @@ class SecretShareBot:
            logger.error(f"[TEST PHONE] Error: {e}")
 
     async def store(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Gem store command - opens the Telegram Mini App."""
-        user_id = update.effective_user.id
-        
-        # Get user's current gem balance
-        user_db_data = self.db.get_or_create_user(user_id, getattr(update.effective_user, 'username', 'Unknown'))
-        gems = user_db_data.get('gems', 0) if user_db_data else 0
-        
-        # Create store button
-        keyboard = [[InlineKeyboardButton("💎 Gem Store", web_app={"url": os.getenv('FRONTEND_URL', 'https://secret-share.com')})]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
+       """Gem store command - opens the Telegram Mini App."""
+       user_id = update.effective_user.id
+       
+       # Get user's current gem balance
+       user_db_data = self.db.get_or_create_user(user_id, getattr(update.effective_user, 'username', 'Unknown'))
+       gems = user_db_data.get('gems', 0) if user_db_data else 0
+               
+       # Create store button
+       keyboard = [[InlineKeyboardButton("💎 Gem Store", web_app={"url": os.getenv('FRONTEND_URL', 'https://secret-share.com')})]]
+       reply_markup = InlineKeyboardMarkup(keyboard)
+       
+       await update.message.reply_text(
            f"Welcome to the Gem Store! 💎\n\n"
            f"Your current balance: **{gems} Gems**\n\n"
            f"Click the button below to upgrade your account and unlock premium features!",
@@ -4391,7 +4391,7 @@ class SecretShareBot:
         await update.message.reply_text("Terms: By using this bot, you agree to our terms and conditions. No refunds except for failed deliveries. Contact /support for help.")
 
     async def support(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("Support: For any issues, contact @YourSupportUsername or reply here.")
+        await update.message.reply_text("For any issues, mail us at support@secret-share.com 📧\n\nWe typically respond within 24 hours!")
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Return user subscription status, expiry, and gem balance for frontend sync."""

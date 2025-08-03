@@ -2645,13 +2645,13 @@ class SecretShareBot:
                 return
         user_session.message_count_since_last_image += 1
         
-        # Start persistent typing indicator (will refresh every 4 seconds)
-        typing_task = await self._start_persistent_typing(user_id, context)
+        # Simple typing indicator (default Telegram 5-second timeout)
+        await context.bot.send_chat_action(chat_id=user_id, action="typing")
         # --- EARLY UPSALE CHECKS (move all upsell logic here, before AI response) ---
         # Prevent back-to-back upsells
         now = datetime.now(timezone.utc)
         last_upsell_time = getattr(user_session, 'last_upsell_time', None)
-        can_upsell = not last_upsell_time or (now - last_upsell_time).total_seconds() > 0
+        can_upsell = not last_upsell_time or (now - last_upsell_time).total_seconds() > 120  # 2 minute cooldown
         # User-initiated premium request
         for offer_type, checker, gem_cost in [
             ('image', is_custom_photo_request, 10),
@@ -2827,11 +2827,7 @@ class SecretShareBot:
             if final_response:
                 await update.message.reply_text(final_response)
             
-            # Cancel typing indicator task and ensure it stops
-            typing_task.cancel()
-            
-            # Wait a moment to ensure typing indicator clears before next message
-            await asyncio.sleep(0.1)
+            # Typing indicator will timeout automatically after 5 seconds
 
             user_session.conversation_history.append({"role": "user", "content": user_message})
             if final_response:
@@ -2862,13 +2858,7 @@ class SecretShareBot:
         except Exception as e:
             logger.error(f"Error in handle_message for user {user_id}: {e}", exc_info=True)
             await update.message.reply_text("Oh, my... I seem to have gotten my thoughts all tangled up. Could you say that again? 💕")
-            # Cancel typing indicator on error as well (if it was started)
-            try:
-                typing_task.cancel()
-                await asyncio.sleep(0.1)  # Brief pause to clear typing indicator
-            except NameError:
-                # typing_task wasn't created yet (early return happened)
-                pass
+            # Typing indicator will timeout automatically after 5 seconds
 
     async def _generate_and_send_image(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_message: Optional[str] = None) -> Optional[str]:
         """
@@ -2892,7 +2882,7 @@ class SecretShareBot:
                 logger.info(f"[BLUR DEBUG] User {user_id} - Image #{user_session.free_images_sent}, should blur: {user_session.free_images_sent % 2 == 0}")
                 if user_session.free_images_sent % 2 == 0:
                     logger.info(f"[BLUR] Attempting to blur image #{user_session.free_images_sent} for user {user_id}")
-                    blurred_url = blur_image_with_replicate(image_url, blur_scale=1000)
+                    blurred_url = blur_image_with_replicate(image_url, blur_scale=15000)
                     if blurred_url:
                         logger.info(f"[BLUR] Successfully got blurred URL: {blurred_url}")
                         import requests
@@ -3135,9 +3125,19 @@ class SecretShareBot:
        await query.answer()
        user_id = query.from_user.id
        user_session = self.active_users.get(user_id)
+       
+       # Check if offer exists and is still pending
        if not user_session or not user_session.premium_offer_state:
            await query.edit_message_text("Sorry, this offer is no longer valid.")
            return
+           
+       # Prevent double-clicks by checking if already processing
+       if user_session.premium_offer_state.get('status') == 'processing':
+           await query.edit_message_text("⏳ Processing your request, please wait...")
+           return
+           
+       # Immediately mark as processing to prevent double-clicks
+       user_session.premium_offer_state['status'] = 'processing'
        data = query.data
        if data.startswith("premium_yes"):
            try:
@@ -3341,8 +3341,7 @@ class SecretShareBot:
                            text=f"🚨 VOICE CALL FAILURE: User {user_id} - Call initiation failed."
                        )
                user_session.premium_offer_state = {}  # Reset after fulfillment
-               if offer_type == 'video':
-                   user_session.last_upsell_time = datetime.now(timezone.utc)  # Prevent back-to-back upsells
+               user_session.last_upsell_time = datetime.now(timezone.utc)  # Prevent back-to-back upsells for ALL offer types
            except Exception as e:
                logger.error(f"[PREMIUM OFFER] Error: {e}")
                self.db.refund_gems(user_id, gem_cost)
@@ -3481,26 +3480,7 @@ class SecretShareBot:
            parse_mode=ParseMode.MARKDOWN
        )
 
-    # Add this async helper function inside SecretShareBot
-    async def _start_persistent_typing(self, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> asyncio.Task:
-        """
-        Starts a background task that periodically sends typing action to keep indicator alive.
-        Returns the task so it can be cancelled when response is ready.
-        """
-        async def typing_loop():
-            try:
-                while True:
-                    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-                    await asyncio.sleep(4)  # Refresh every 4 seconds (before 5-second timeout)
-            except asyncio.CancelledError:
-                # Task was cancelled - this is expected when response is ready
-                pass
-            except Exception as e:
-                logger.warning(f"[TYPING] Error in persistent typing for user {chat_id}: {e}")
-        
-        # Start the background task
-        task = asyncio.create_task(typing_loop())
-        return task
+
 
     async def generate_upsell_line(self, user_session, offer_type, user_message=None):
        character = CHARACTERS[user_session.current_character]
@@ -3598,6 +3578,12 @@ class SecretShareBot:
        await query.answer()
        user_id = query.from_user.id
        user_session = self.active_users.get(user_id)
+       
+       # Prevent double-clicks on unblur button
+       if user_session and hasattr(user_session, 'unblur_processing') and user_session.unblur_processing:
+           await query.edit_message_text("⏳ Processing your unblur request, please wait...")
+           return
+           
        user_db_data = self.db.get_or_create_user(user_id, getattr(update.effective_user, 'username', 'Unknown'))
        gems = user_db_data.get('gems', 0) if user_db_data else 0
        # Find the last image URL in the session
@@ -3608,14 +3594,26 @@ class SecretShareBot:
        if gems < 10:
            await query.edit_message_text("You don't have enough Gems to unblur this image. Please top up and try again.")
            return
+           
+       # Mark as processing to prevent double-clicks
+       if user_session:
+           user_session.unblur_processing = True
+           
        # Deduct gems
        try:
            supabase.table('users').update({'gems': gems - 10}).eq('telegram_id', user_id).execute()
        except Exception as e:
+           if user_session:
+               user_session.unblur_processing = False
            await query.edit_message_text("There was a problem processing your payment. Please try again later.")
            return
+           
        # Send only the unblurred image, no extra message
        await context.bot.send_photo(chat_id=user_id, photo=last_image_url)
+       
+       # Clear processing flag
+       if user_session:
+           user_session.unblur_processing = False
 
     async def generate_video_prompt(self, user_session, user_message):
        character = CHARACTERS[user_session.current_character]
@@ -4686,27 +4684,33 @@ def clean_voice_note_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 def clean_voice_call_text(text: str) -> str:
-    if not text: return text
-    text = re.sub(r"\*[^*]*\*", "", text)
-    text = re.sub(r"\[[^\]]*\]", "", text)
-    return re.sub(r"\s+", " ", text).strip()
+    """Aggressive cleaning for voice calls - remove ALL action statements and descriptions."""
+    if not text: 
+        return text
+    
+    # Remove all content in asterisks (action statements)
     text = re.sub(r'\*[^*]*\*', '', text)
     
     # Remove all content in brackets
     text = re.sub(r'\[[^\]]*\]', '', text)
     
     # Remove all content in parentheses that looks like actions
-    text = re.sub(r'\([^)]*(?:chuckle|sigh|moan|breath|whisper|giggle|laugh|gasp)[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*(?:chuckle|sigh|moan|breath|whisper|giggle|laugh|gasp|lean|smile|grin|touch|move|look|eye|hand|finger)[^)]*\)', '', text, flags=re.IGNORECASE)
     
-    # Remove standalone action words that might leak through
-    action_words = [
-        'chuckles', 'chuckling', 'sighs', 'sighing', 'moans', 'moaning', 
-        'gasps', 'gasping', 'whispers', 'whispering', 'giggles', 'giggling',
-        'laughs', 'laughing', 'breathes', 'breathing', 'purrs', 'purring'
+    # Remove standalone action words and phrases that might leak through
+    action_patterns = [
+        r'\b(?:chuckles?|chuckling|sighs?|sighing|moans?|moaning)\b',
+        r'\b(?:gasps?|gasping|whispers?|whispering|giggles?|giggling)\b', 
+        r'\b(?:laughs?|laughing|breathes?|breathing|purrs?|purring)\b',
+        r'\b(?:leans?|leaning|smiles?|smiling|grins?|grinning)\b',
+        r'\b(?:touches?|touching|moves?|moving|looks?|looking)\b',
+        r'\*[^*]*\*',  # Any remaining asterisk actions
+        r'I (?:lean|touch|move|smile|grin|chuckle|sigh|whisper|look)',
+        r'(?:My|Her) (?:eyes?|hands?|fingers?|lips?|voice) [^.!?]*[.!?]'
     ]
-    for word in action_words:
-        # Remove if it's a standalone word or at the beginning/end
-        text = re.sub(rf'\b{word}\b', '', text, flags=re.IGNORECASE)
+    
+    for pattern in action_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
     # Clean up multiple spaces and trim
     text = re.sub(r'\s+', ' ', text).strip()
@@ -4714,7 +4718,17 @@ def clean_voice_call_text(text: str) -> str:
     # Remove empty sentences or fragments
     text = re.sub(r'[.!?]\s*[.!?]', '.', text)
     
-    return text
+    # Remove sentences that are just actions
+    sentences = text.split('.')
+    clean_sentences = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if sentence and not re.match(r'^(?:I |My |Her |The )', sentence, re.IGNORECASE):
+            clean_sentences.append(sentence)
+        elif sentence and len(sentence.split()) > 3:  # Keep longer sentences even if they start with I/My/Her
+            clean_sentences.append(sentence)
+    
+    return '. '.join(clean_sentences).strip()
 
 
 def main():

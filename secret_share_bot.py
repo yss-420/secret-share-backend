@@ -2154,6 +2154,11 @@ class SecretShareBot:
                user_session.last_video_task = {}
 
     async def send_premium_offer_overlay(self, update, context, user_id, offer_type, gem_cost, character_line=None):
+       # Stop typing indicator before sending upsell messages
+       user_session = self.active_users.get(user_id)
+       if user_session and user_session.typing_manager:
+           await user_session.typing_manager.stop_typing()
+           
        user_db_data = self.db.get_or_create_user(user_id, getattr(update.effective_user, 'username', 'Unknown'))
        gems = user_db_data.get('gems', 0) if user_db_data else 0
        if offer_type == 'image':
@@ -2741,6 +2746,7 @@ class SecretShareBot:
                 char_ack = await self.generate_upsell_line(user_session, offer_type, user_message)
                 user_session.premium_offer_state = {'type': offer_type, 'status': 'pending'}
                 await self.send_premium_offer_overlay(update, context, user_id, offer_type, gem_cost, character_line=char_ack)
+                user_session.last_upsell_time = datetime.now(timezone.utc)  # Set cooldown immediately when upsell is sent
                 return  # Do not send a normal chat reply
         
         # Handle video requests with LoRA detection
@@ -2751,6 +2757,7 @@ class SecretShareBot:
             # Store detected_lora as None if no specific keyword was found (will trigger random selection)
             user_session.premium_offer_state = {'type': 'video', 'status': 'pending', 'detected_lora': detected_lora}
             await self.send_premium_offer_overlay(update, context, user_id, 'video', 80, character_line=char_ack)
+            user_session.last_upsell_time = datetime.now(timezone.utc)  # Set cooldown immediately when upsell is sent
             return  # Do not send a normal chat reply
         # Fallback random/probability-based AI upsell after 10+ messages if no offer has been triggered
         if user_session.session_message_count >= 10 and not (user_session.premium_offer_state and user_session.premium_offer_state.get('status') == 'pending') and can_upsell:
@@ -2771,6 +2778,7 @@ class SecretShareBot:
                 logger.info(f"[UPSELL] Fallback random AI upsell triggered for user {user_id}: {offer_type}")
                 user_session.premium_offer_state = {'type': offer_type, 'status': 'pending'}
                 await self.send_premium_offer_overlay(update, context, user_id, offer_type, gem_cost, character_line=char_ack)
+                user_session.last_upsell_time = datetime.now(timezone.utc)  # Set cooldown immediately when upsell is sent
                 return  # Do not send a normal chat reply
         # --- END EARLY UPSALE CHECKS ---
         # Name detection and prompt logic - ALWAYS check for name updates
@@ -2871,10 +2879,13 @@ class SecretShareBot:
                     system_prompt_full += f"\n**IMAGE CONTEXT:** An image of you wearing {user_session.character_current_outfit} was just sent. Your dialogue should naturally reference your appearance or the visual moment captured."
             # If user name is missing, prompt for it
             if not user_session.user_name:
+                # Stop typing before name request
+                if user_session.typing_manager:
+                    await user_session.typing_manager.stop_typing()
                 await update.message.reply_text("Before we continue, what should I call you? Please tell me your name.")
                 return
             prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
-            for turn in user_session.conversation_history[-5:]:
+            for turn in user_session.conversation_history[-30:]:
                 prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
             prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
             prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
@@ -2912,8 +2923,8 @@ class SecretShareBot:
             user_session.conversation_history.append({"role": "user", "content": user_message})
             if final_response:
                 user_session.conversation_history.append({"role": "assistant", "content": final_response})
-            if len(user_session.conversation_history) > 50:
-                user_session.conversation_history = user_session.conversation_history[-50:]
+            if len(user_session.conversation_history) > 100:
+                user_session.conversation_history = user_session.conversation_history[-100:]
             
             asyncio.create_task(self.db.update_user_on_message(user_id))
             if final_response:
@@ -2963,6 +2974,9 @@ class SecretShareBot:
             if image_url:
                 if not isinstance(image_url, str):
                     logger.error(f"[IMAGE] Generated URL is not a string: {type(image_url)}")
+                    # Stop typing before error message
+                    if user_session.typing_manager:
+                        await user_session.typing_manager.stop_typing()
                     await update.message.reply_text("There was a problem with the generated image format. Please try again.")
                     return None
                 user_session.free_images_sent += 1
@@ -3002,10 +3016,16 @@ class SecretShareBot:
                     await update.message.reply_photo(photo=image_url)
                 logger.info(f"[IMAGE] Successfully sent image #{user_session.free_images_sent} to user {user_id}")
                 return image_url
+                # Stop typing before error message
+                if user_session.typing_manager:
+                    await user_session.typing_manager.stop_typing()
                 await update.message.reply_text("I tried to show you, but my camera seems to be malfunctioning... maybe try again in a moment?")
                 return None
         except Exception as e:
             logger.error(f"[IMAGE] Failed to generate/send image for user {user_id}: {e}", exc_info=True)
+            # Stop typing before error message
+            if user_session.typing_manager:
+                await user_session.typing_manager.stop_typing()
             await update.message.reply_text("I tried to show you, but something went wrong... let's continue our conversation though.")
             return None
 

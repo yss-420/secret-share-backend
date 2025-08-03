@@ -770,75 +770,52 @@ CHARACTERS = {
 
 class TypingManager:
     """
-    Robust typing indicator manager that ensures perfect synchronization.
-    Typing starts when user sends message and stops exactly when bot responds.
+    Lightweight typing indicator manager for better performance.
+    Simple start/stop with minimal overhead.
     """
     def __init__(self, bot, chat_id: int):
         self.bot = bot
         self.chat_id = chat_id
         self.task = None
-        self.stop_event = asyncio.Event()
         self.is_active = False
         
     async def start_typing(self):
-        """Start the typing indicator and keep it active"""
+        """Start the typing indicator - fast and simple"""
         if self.is_active:
-            return  # Already active
+            return
             
-        # Clean up any existing task
-        if self.task and not self.task.done():
-            self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                pass
-        
-        self.stop_event.clear()
         self.is_active = True
-        self.task = asyncio.create_task(self._typing_loop())
+        try:
+            await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+            # Start simple refresh task
+            self.task = asyncio.create_task(self._simple_refresh())
+        except Exception:
+            pass
         
     async def stop_typing(self):
-        """Stop the typing indicator immediately and cleanly"""
+        """Stop the typing indicator immediately"""
         if not self.is_active:
             return
             
         self.is_active = False
-        self.stop_event.set()
         
-        # Cancel the background task
+        # Cancel refresh task quickly
         if self.task and not self.task.done():
             self.task.cancel()
             try:
                 await self.task
             except asyncio.CancelledError:
                 pass
-        
-        # Send a different action to immediately clear typing indicator
-        try:
-            await self.bot.send_chat_action(chat_id=self.chat_id, action="choose_sticker")
-            await asyncio.sleep(0.05)  # Brief pause to let it register
-        except Exception:
-            pass  # Ignore errors in cleanup
     
-    async def _typing_loop(self):
-        """Background loop that maintains typing indicator every 4 seconds"""
+    async def _simple_refresh(self):
+        """Simple typing refresh every 4 seconds"""
         try:
-            # Send initial typing action
-            await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
-            
-            while self.is_active and not self.stop_event.is_set():
-                try:
-                    # Wait for 4 seconds or until stop is requested
-                    await asyncio.wait_for(self.stop_event.wait(), timeout=4.0)
-                    break  # Stop event was set, exit loop
-                except asyncio.TimeoutError:
-                    # 4 seconds passed, refresh typing indicator
-                    if self.is_active:
-                        await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
-        except asyncio.CancelledError:
-            pass  # Task was cancelled, exit cleanly
-        except Exception as e:
-            logger.warning(f"[TYPING] Error in typing loop for chat {self.chat_id}: {e}")
+            while self.is_active:
+                await asyncio.sleep(4)
+                if self.is_active:
+                    await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 @dataclass
@@ -2885,7 +2862,7 @@ class SecretShareBot:
                 await update.message.reply_text("Before we continue, what should I call you? Please tell me your name.")
                 return
             prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
-            for turn in user_session.conversation_history[-30:]:
+            for turn in user_session.conversation_history[-12:]:
                 prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
             prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
             prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
@@ -2923,8 +2900,8 @@ class SecretShareBot:
             user_session.conversation_history.append({"role": "user", "content": user_message})
             if final_response:
                 user_session.conversation_history.append({"role": "assistant", "content": final_response})
-            if len(user_session.conversation_history) > 100:
-                user_session.conversation_history = user_session.conversation_history[-100:]
+            if len(user_session.conversation_history) > 60:
+                user_session.conversation_history = user_session.conversation_history[-60:]
             
             asyncio.create_task(self.db.update_user_on_message(user_id))
             if final_response:
@@ -2974,9 +2951,6 @@ class SecretShareBot:
             if image_url:
                 if not isinstance(image_url, str):
                     logger.error(f"[IMAGE] Generated URL is not a string: {type(image_url)}")
-                    # Stop typing before error message
-                    if user_session.typing_manager:
-                        await user_session.typing_manager.stop_typing()
                     await update.message.reply_text("There was a problem with the generated image format. Please try again.")
                     return None
                 user_session.free_images_sent += 1
@@ -3016,22 +2990,26 @@ class SecretShareBot:
                     await update.message.reply_photo(photo=image_url)
                 logger.info(f"[IMAGE] Successfully sent image #{user_session.free_images_sent} to user {user_id}")
                 return image_url
-                # Stop typing before error message
-                if user_session.typing_manager:
-                    await user_session.typing_manager.stop_typing()
                 await update.message.reply_text("I tried to show you, but my camera seems to be malfunctioning... maybe try again in a moment?")
                 return None
         except Exception as e:
             logger.error(f"[IMAGE] Failed to generate/send image for user {user_id}: {e}", exc_info=True)
-            # Stop typing before error message
-            if user_session.typing_manager:
-                await user_session.typing_manager.stop_typing()
             await update.message.reply_text("I tried to show you, but something went wrong... let's continue our conversation though.")
             return None
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
        user = update.effective_user
-       db_user = self.db.get_or_create_user(user.id, user.username or "Unknown")
+       user_id = user.id
+       
+       # Clean up any existing session state and typing manager
+       if user_id in self.active_users:
+           user_session = self.active_users[user_id]
+           if user_session.typing_manager:
+               await user_session.typing_manager.stop_typing()
+           # Reset to fresh session
+           self.active_users[user_id] = UserData()
+       
+       db_user = self.db.get_or_create_user(user_id, user.username or "Unknown")
 
        if not db_user:
             await update.message.reply_text("Sorry, there was a problem creating your profile. Please try again later. 😟")

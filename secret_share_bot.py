@@ -767,6 +767,80 @@ CHARACTERS = {
    }
 }
 
+
+class TypingManager:
+    """
+    Robust typing indicator manager that ensures perfect synchronization.
+    Typing starts when user sends message and stops exactly when bot responds.
+    """
+    def __init__(self, bot, chat_id: int):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.task = None
+        self.stop_event = asyncio.Event()
+        self.is_active = False
+        
+    async def start_typing(self):
+        """Start the typing indicator and keep it active"""
+        if self.is_active:
+            return  # Already active
+            
+        # Clean up any existing task
+        if self.task and not self.task.done():
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+        
+        self.stop_event.clear()
+        self.is_active = True
+        self.task = asyncio.create_task(self._typing_loop())
+        
+    async def stop_typing(self):
+        """Stop the typing indicator immediately and cleanly"""
+        if not self.is_active:
+            return
+            
+        self.is_active = False
+        self.stop_event.set()
+        
+        # Cancel the background task
+        if self.task and not self.task.done():
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+        
+        # Send a different action to immediately clear typing indicator
+        try:
+            await self.bot.send_chat_action(chat_id=self.chat_id, action="choose_sticker")
+            await asyncio.sleep(0.05)  # Brief pause to let it register
+        except Exception:
+            pass  # Ignore errors in cleanup
+    
+    async def _typing_loop(self):
+        """Background loop that maintains typing indicator every 4 seconds"""
+        try:
+            # Send initial typing action
+            await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+            
+            while self.is_active and not self.stop_event.is_set():
+                try:
+                    # Wait for 4 seconds or until stop is requested
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=4.0)
+                    break  # Stop event was set, exit loop
+                except asyncio.TimeoutError:
+                    # 4 seconds passed, refresh typing indicator
+                    if self.is_active:
+                        await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+        except asyncio.CancelledError:
+            pass  # Task was cancelled, exit cleanly
+        except Exception as e:
+            logger.warning(f"[TYPING] Error in typing loop for chat {self.chat_id}: {e}")
+
+
 @dataclass
 class UserData:
     """User session data with enhanced state tracking for v68."""
@@ -798,6 +872,8 @@ class UserData:
     gems: int = 0
     messages_today: int = 0
     subscription_type: Optional[str] = None
+    # Robust typing indicator manager
+    typing_manager: Optional['TypingManager'] = None
 
     def validate_state_transition(self, new_state: str) -> bool:
         """v68: Validates that clothing state transitions are logical."""
@@ -2645,8 +2721,10 @@ class SecretShareBot:
                 return
         user_session.message_count_since_last_image += 1
         
-        # Simple typing indicator (default Telegram 5-second timeout)
-        await context.bot.send_chat_action(chat_id=user_id, action="typing")
+        # Initialize and start robust typing indicator
+        if not user_session.typing_manager:
+            user_session.typing_manager = TypingManager(context.bot, user_id)
+        await user_session.typing_manager.start_typing()
         # --- EARLY UPSALE CHECKS (move all upsell logic here, before AI response) ---
         # Prevent back-to-back upsells
         now = datetime.now(timezone.utc)
@@ -2824,10 +2902,12 @@ class SecretShareBot:
 
             final_response = completed_sentence_response.strip()
 
+            # Stop typing indicator before sending response
+            if user_session.typing_manager:
+                await user_session.typing_manager.stop_typing()
+            
             if final_response:
                 await update.message.reply_text(final_response)
-            
-            # Typing indicator will timeout automatically after 5 seconds
 
             user_session.conversation_history.append({"role": "user", "content": user_message})
             if final_response:
@@ -2857,8 +2937,16 @@ class SecretShareBot:
 
         except Exception as e:
             logger.error(f"Error in handle_message for user {user_id}: {e}", exc_info=True)
+            
+            # Stop typing indicator on error
+            user_session = self.active_users.get(user_id)
+            if user_session and user_session.typing_manager:
+                try:
+                    await user_session.typing_manager.stop_typing()
+                except Exception:
+                    pass  # Ignore errors in cleanup
+                    
             await update.message.reply_text("Oh, my... I seem to have gotten my thoughts all tangled up. Could you say that again? 💕")
-            # Typing indicator will timeout automatically after 5 seconds
 
     async def _generate_and_send_image(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_message: Optional[str] = None) -> Optional[str]:
         """

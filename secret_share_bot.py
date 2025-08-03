@@ -2827,8 +2827,11 @@ class SecretShareBot:
             if final_response:
                 await update.message.reply_text(final_response)
             
-            # Cancel typing indicator whether response was sent or not
+            # Cancel typing indicator task and ensure it stops
             typing_task.cancel()
+            
+            # Wait a moment to ensure typing indicator clears before next message
+            await asyncio.sleep(0.1)
 
             user_session.conversation_history.append({"role": "user", "content": user_message})
             if final_response:
@@ -2862,6 +2865,7 @@ class SecretShareBot:
             # Cancel typing indicator on error as well (if it was started)
             try:
                 typing_task.cancel()
+                await asyncio.sleep(0.1)  # Brief pause to clear typing indicator
             except NameError:
                 # typing_task wasn't created yet (early return happened)
                 pass

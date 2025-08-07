@@ -1216,7 +1216,7 @@ class KoboldAPI:
             }
             logger.info(f"[KOBOLD] Starting generation at {start_time}, prompt: {prompt[:50]}...")
             try:
-                async with self.session.post(self.base_url, json=payload, timeout=30) as response:  # Faster timeout for high load
+                async with self.session.post(self.base_url, json=payload, timeout=75) as response:  # Extended timeout - never give up!
                     if response.status == 200:
                         data = await response.json()
                         text = data['results'][0]['text'].strip()
@@ -1235,7 +1235,7 @@ class KoboldAPI:
                         logger.error(f"Kobold API returned status {response.status}")
                         return ""
             except asyncio.TimeoutError:
-                logger.error(f"[KOBOLD TIMEOUT] Request timed out after 30 seconds for prompt: {prompt[:100]}...")
+                logger.error(f"[KOBOLD TIMEOUT] Request timed out after 75 seconds for prompt: {prompt[:100]}...")
                 return "Hey there! Sorry, I'm thinking a bit slow right now... What's on your mind? 😊"
             except aiohttp.ClientError as e:
                 logger.error(f"[KOBOLD ERROR] Client error during generation: {e}")

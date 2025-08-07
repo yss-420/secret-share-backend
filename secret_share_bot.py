@@ -1210,15 +1210,15 @@ class KoboldAPI:
             if not self.session or self.session.closed:
                 raise RuntimeError("API session is not started or has been closed.")
             
-            # Ultra-optimized payload for 15-second generation
+            # ULTRA-SPEED payload for 10-second generation
             payload = {
                 "prompt": prompt, 
                 "max_length": max_tokens, 
-                "temperature": 0.75, # Higher for faster decisions
-                "top_p": 0.8,       # More focused sampling
-                "min_p": 0.15,      # Faster token selection
-                "rep_pen": 1.03,    # Minimal penalty for speed
-                "stop_sequence": ["<|im_end|>", "User:", "\n\n"]  # Minimal stop sequences
+                "temperature": 0.8,  # Higher for fastest decisions
+                "top_p": 0.75,      # More aggressive sampling
+                "min_p": 0.2,       # Much faster token selection
+                "rep_pen": 1.02,    # Absolute minimal penalty
+                "stop_sequence": ["<|im_end|>", "\n\n"]  # Ultra-minimal stops
             }
             logger.info(f"[KOBOLD FAST] Starting generation, prompt: {prompt[:50]}...")
             try:
@@ -2909,12 +2909,21 @@ class SecretShareBot:
                     await user_session.typing_manager.stop_typing()
                 await update.message.reply_text("Before we continue, what should I call you? Please tell me your name.")
                 return
+            # SMART CONTEXT MANAGEMENT - Keep context under 800 tokens for 10s generation
             prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
-            for turn in user_session.conversation_history[-12:]:
+            
+            # Use only last 6 turns (instead of 12) for speed
+            recent_history = user_session.conversation_history[-6:]
+            for turn in recent_history:
                 prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
+            
             prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
             prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
             final_prompt = "".join(prompt_parts)
+            
+            # Log context size for monitoring
+            context_tokens = len(final_prompt.split())
+            logger.info(f"[CONTEXT] Context size: ~{context_tokens} tokens for user {user_id}")
 
             raw_bot_response = ""
             if self.kobold_available:
@@ -2948,8 +2957,14 @@ class SecretShareBot:
             user_session.conversation_history.append({"role": "user", "content": user_message})
             if final_response:
                 user_session.conversation_history.append({"role": "assistant", "content": final_response})
-            if len(user_session.conversation_history) > 60:
-                user_session.conversation_history = user_session.conversation_history[-60:]
+            
+            # AGGRESSIVE CONTEXT TRIMMING - Keep only last 20 turns for speed
+            if len(user_session.conversation_history) > 20:
+                # Keep first 2 turns (character intro) and last 18 turns
+                important_start = user_session.conversation_history[:2]
+                recent_turns = user_session.conversation_history[-18:]
+                user_session.conversation_history = important_start + recent_turns
+                logger.info(f"[CONTEXT] Trimmed history to 20 turns for user {user_id} - maintaining speed")
             
             asyncio.create_task(self.db.update_user_on_message(user_id))
             if final_response:

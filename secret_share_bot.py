@@ -877,31 +877,13 @@ class Database:
     _cache_timeout = 30  # seconds
     
     @staticmethod
-    async def get_or_create_user(user_id: int, username: str) -> Optional[Dict]:
-        """Fetches a user from the database with caching for performance."""
-        # Check cache first
-        cache_key = f"user_{user_id}"
-        if cache_key in Database._user_cache:
-            cached_data, timestamp = Database._user_cache[cache_key]
-            if (datetime.now() - timestamp).seconds < Database._cache_timeout:
-                return cached_data
-        
+    def get_or_create_user(user_id: int, username: str) -> Optional[Dict]:
+        """Fetches a user from the database. If they don't exist, creates them."""
         try:
-            await Database.reset_daily_limits_if_needed(user_id)
-            # Run database operations in executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            
-            def get_user():
-                result = supabase.table('users').select('*').eq('telegram_id', user_id).single().execute()
-                supabase.table('users').update({'last_seen': datetime.now(timezone.utc).isoformat()}).eq('telegram_id', user_id).execute()
-                return result.data
-            
-            user_data = await loop.run_in_executor(None, get_user)
-            
-            # Cache the result
-            Database._user_cache[cache_key] = (user_data, datetime.now())
-            return user_data
-            
+            Database.reset_daily_limits_if_needed(user_id)
+            result = supabase.table('users').select('*').eq('telegram_id', user_id).single().execute()
+            supabase.table('users').update({'last_seen': datetime.now(timezone.utc).isoformat()}).eq('telegram_id', user_id).execute()
+            return result.data
         except Exception as e:
             logger.info(f"User {user_id} not found, creating new entry. Reason: {e}")
             try:
@@ -916,42 +898,29 @@ class Database:
                     'age_verified': False,
                     'last_seen': now_iso
                 }
-                
-                def create_user():
-                    return supabase.table('users').insert(new_user_data).execute().data[0]
-                
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, create_user)
-                
-                # Cache the new user
-                Database._user_cache[cache_key] = (result, datetime.now())
-                return result
-                
+                insert_result = supabase.table('users').insert(new_user_data).execute()
+                return insert_result.data[0]
             except Exception as insert_e:
                 logger.error(f"CRITICAL: Could not create new user {user_id} in database. Error: {insert_e}")
                 return None
 
     @staticmethod
-    async def reset_daily_limits_if_needed(user_id: int):
+    def reset_daily_limits_if_needed(user_id: int):
         """Checks if the user's last message was before today (UTC) and resets their daily limit."""
         try:
-            def check_and_reset():
-                user_res = supabase.table('users').select('last_message_date').eq('telegram_id', user_id).single().execute()
-                user_data = user_res.data
-                
-                if user_data and user_data.get('last_message_date'):
-                    last_date = datetime.fromisoformat(user_data['last_message_date']).date()
-                    today_utc = datetime.now(timezone.utc).date()
-                    
-                    if last_date < today_utc:
-                        logger.info(f"Resetting daily message limit for user {user_id}.")
-                        supabase.table('users').update({
-                            'messages_today': 0,
-                            'last_message_date': datetime.now(timezone.utc).isoformat()
-                        }).eq('telegram_id', user_id).execute()
+            user_res = supabase.table('users').select('last_message_date').eq('telegram_id', user_id).single().execute()
+            user_data = user_res.data
             
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, check_and_reset)
+            if user_data and user_data.get('last_message_date'):
+                last_date = datetime.fromisoformat(user_data['last_message_date']).date()
+                today_utc = datetime.now(timezone.utc).date()
+                
+                if last_date < today_utc:
+                    logger.info(f"Resetting daily message limit for user {user_id}.")
+                    supabase.table('users').update({
+                        'messages_today': 0,
+                        'last_message_date': datetime.now(timezone.utc).isoformat()
+                    }).eq('telegram_id', user_id).execute()
         except Exception as e:
             logger.info(f"Could not check daily limit for user {user_id} (they might be new). Error: {e}")
 
@@ -2397,7 +2366,7 @@ class SecretShareBot:
         """Refresh user data when they return from WebApp or after payment - FRONTEND INTEGRATION"""
         try:
             # Always get fresh data from database
-            updated_user = await Database.get_or_create_user(user_id, username)
+            updated_user = Database.get_or_create_user(user_id, username)
             if updated_user:
                 # Update or create user session with fresh data
                 if user_id in self.active_users:
@@ -2724,7 +2693,7 @@ class SecretShareBot:
                     await self.handle_voice_call_phone_collection(update, context, user_id, user_message)
                     return
         
-        user_db_data = await self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
+        user_db_data = self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
         if not user_db_data:
             await update.message.reply_text("Sorry, there was a problem accessing your profile. Please try again later. 😟")
             return
@@ -2755,7 +2724,7 @@ class SecretShareBot:
         
         # Only enforce daily limits for FREE users (non-subscribed, non-admin)
         if not is_subscribed and not is_admin:
-            current_user_data = await self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
+            current_user_data = self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
             messages_today = current_user_data.get('messages_today', 0) if current_user_data else 0
             
             logger.info(f"[MESSAGE LIMIT] Free user {user_id}: {messages_today}/{DAILY_MESSAGE_LIMIT} messages today")
@@ -3077,7 +3046,7 @@ class SecretShareBot:
            # Reset to fresh session
            self.active_users[user_id] = UserData()
        
-       db_user = await self.db.get_or_create_user(user_id, user.username or "Unknown")
+       db_user = self.db.get_or_create_user(user_id, user.username or "Unknown")
 
        if not db_user:
             await update.message.reply_text("Sorry, there was a problem creating your profile. Please try again later. 😟")

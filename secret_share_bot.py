@@ -1177,8 +1177,8 @@ class KoboldAPI:
     def __init__(self, base_url: str):
         self.base_url = base_url
         self.session = None
-        # Limit concurrent requests to prevent RunPod GPU overload  
-        self._semaphore = asyncio.Semaphore(3)  # Reduce queue for faster processing
+        # Limit concurrent requests to prevent RunPod GPU overload
+        self._semaphore = asyncio.Semaphore(5)  # Balanced for complete message generation
 
     async def start_session(self):
         if self.session is None or self.session.closed:
@@ -2912,7 +2912,7 @@ class SecretShareBot:
 
             raw_bot_response = ""
             if self.kobold_available:
-                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=60)
+                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=120)
             else:
                 raw_bot_response = "*I sigh softly.* My thoughts are a bit hazy right now... I can't seem to connect. Please try again in a little while."
 

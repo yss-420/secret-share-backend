@@ -3194,8 +3194,8 @@ class SecretShareBot:
            parse_mode=ParseMode.MARKDOWN
        )
        
-       # 1.5-second pause for users to read the premium features message
-       await asyncio.sleep(1.5)
+       # 2.5-second pause for users to read the premium features message  
+       await asyncio.sleep(2.5)
 
        background_image_url = scenario.get("background_image_url")
        intro_text = f"_{scenario['intro_text']}_"

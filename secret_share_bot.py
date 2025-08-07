@@ -780,15 +780,14 @@ class TypingManager:
         self.is_active = False
         
     async def start_typing(self):
-        """Start the typing indicator - fast and simple"""
+        """Start the typing indicator - emergency simple mode"""
         if self.is_active:
             return
             
         self.is_active = True
         try:
             await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
-            # Start simple refresh task
-            self.task = asyncio.create_task(self._simple_refresh())
+            # NO background refresh task during high load
         except Exception:
             pass
         
@@ -880,9 +879,9 @@ class Database:
     def get_or_create_user(user_id: int, username: str) -> Optional[Dict]:
         """Fetches a user from the database. If they don't exist, creates them."""
         try:
-            Database.reset_daily_limits_if_needed(user_id)
+            # Skip daily limit check to reduce DB load under heavy traffic
             result = supabase.table('users').select('*').eq('telegram_id', user_id).single().execute()
-            supabase.table('users').update({'last_seen': datetime.now(timezone.utc).isoformat()}).eq('telegram_id', user_id).execute()
+            # Skip last_seen update to reduce DB writes
             return result.data
         except Exception as e:
             logger.info(f"User {user_id} not found, creating new entry. Reason: {e}")
@@ -2663,20 +2662,21 @@ class SecretShareBot:
             logger.error(f"[CALL END] Error processing call end for {call_id}: {e}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Handle WebApp data from frontend
-        if update.message and update.message.web_app_data:
-            await self.handle_webapp_data(update, context)
-            return
-            
-        if not update.message or not update.message.text:
-            return
-        user_tg = update.effective_user
-        user_id = user_tg.id
-        user_message = update.message.text
-        logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
+        # Emergency request limiting during high load
+        async with self._request_semaphore:
+            # Handle WebApp data from frontend
+            if update.message and update.message.web_app_data:
+                await self.handle_webapp_data(update, context)
+                return
+                
+            if not update.message or not update.message.text:
+                return
+            user_tg = update.effective_user
+            user_id = user_tg.id
+            user_message = update.message.text
+            logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
         
-        # FRONTEND INTEGRATION: Refresh user data when they return from WebApp or any interaction
-        await self._refresh_user_data_on_return(user_id, user_tg.username or "")
+        # Skip user data refresh during high load to improve performance
         
         # Check if user is waiting to provide phone number for voice call
         user_session = self.active_users.get(user_id)

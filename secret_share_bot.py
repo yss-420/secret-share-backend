@@ -2686,6 +2686,12 @@ class SecretShareBot:
         user_message = update.message.text
         logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
         
+        # START TYPING INDICATOR INSTANTLY - before any processing
+        try:
+            await update.message.chat.send_action("typing")
+        except Exception as e:
+            logger.warning(f"[TYPING] Could not start instant typing for user {user_id}: {e}")
+        
         # Skip user data refresh during high load to improve performance
         
         # Check if user is waiting to provide phone number for voice call
@@ -2909,21 +2915,41 @@ class SecretShareBot:
                     await user_session.typing_manager.stop_typing()
                 await update.message.reply_text("Before we continue, what should I call you? Please tell me your name.")
                 return
-            # SMART CONTEXT MANAGEMENT - Keep context under 800 tokens for 10s generation
+            # FORCED CONTEXT SHIFTING - Mimic Kobold's automatic behavior
             prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
             
-            # Use only last 6 turns (instead of 12) for speed
+            # Start with recent history and trim aggressively if needed
             recent_history = user_session.conversation_history[-6:]
+            
+            # Build initial prompt
             for turn in recent_history:
                 prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
             
             prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
             prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
-            final_prompt = "".join(prompt_parts)
+            initial_prompt = "".join(prompt_parts)
             
-            # Log context size for monitoring
-            context_tokens = len(final_prompt.split())
-            logger.info(f"[CONTEXT] Context size: ~{context_tokens} tokens for user {user_id}")
+            # FORCE CONTEXT TRIMMING - Keep under 400 tokens for ultra-fast processing
+            # More accurate token estimation (words * 1.3 for tokens)
+            context_tokens = int(len(initial_prompt.split()) * 1.3)
+            if context_tokens > 400:
+                logger.info(f"[CONTEXT SHIFT] Forcing trim from {context_tokens} tokens - mimicking Kobold behavior")
+                
+                # Trim to only last 3 turns + system prompt
+                prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
+                trimmed_history = user_session.conversation_history[-3:]
+                for turn in trimmed_history:
+                    prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
+                
+                prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
+                prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
+                final_prompt = "".join(prompt_parts)
+                
+                final_tokens = int(len(final_prompt.split()) * 1.3)
+                logger.info(f"[CONTEXT SHIFT] ✅ Trimmed to {final_tokens} tokens - targeting 10s generation")
+            else:
+                final_prompt = initial_prompt
+                logger.info(f"[CONTEXT] Context size: {context_tokens} tokens - within limits")
 
             raw_bot_response = ""
             if self.kobold_available:

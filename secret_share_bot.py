@@ -1177,8 +1177,8 @@ class KoboldAPI:
     def __init__(self, base_url: str):
         self.base_url = base_url
         self.session = None
-        # Limit concurrent requests to prevent RunPod GPU overload
-        self._semaphore = asyncio.Semaphore(5)  # Balanced for GPU capacity
+        # Limit concurrent requests to prevent RunPod GPU overload  
+        self._semaphore = asyncio.Semaphore(3)  # Reduce queue for faster processing
 
     async def start_session(self):
         if self.session is None or self.session.closed:

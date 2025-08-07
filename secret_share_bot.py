@@ -2693,19 +2693,17 @@ class SecretShareBot:
             logger.error(f"[CALL END] Error processing call end for {call_id}: {e}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Request queuing to prevent system overload
-        async with self._request_semaphore:
-            # Handle WebApp data from frontend
-            if update.message and update.message.web_app_data:
-                await self.handle_webapp_data(update, context)
-                return
-                
-            if not update.message or not update.message.text:
-                return
-            user_tg = update.effective_user
-            user_id = user_tg.id
-            user_message = update.message.text
-            logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
+        # Handle WebApp data from frontend
+        if update.message and update.message.web_app_data:
+            await self.handle_webapp_data(update, context)
+            return
+            
+        if not update.message or not update.message.text:
+            return
+        user_tg = update.effective_user
+        user_id = user_tg.id
+        user_message = update.message.text
+        logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
         
         # FRONTEND INTEGRATION: Refresh user data when they return from WebApp or any interaction
         await self._refresh_user_data_on_return(user_id, user_tg.username or "")

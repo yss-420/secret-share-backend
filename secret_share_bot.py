@@ -1177,8 +1177,8 @@ class KoboldAPI:
     def __init__(self, base_url: str):
         self.base_url = base_url
         self.session = None
-        # Limit concurrent requests to prevent Kobold overload
-        self._semaphore = asyncio.Semaphore(10)  # Increased for high load
+        # Limit concurrent requests to prevent RunPod GPU overload
+        self._semaphore = asyncio.Semaphore(5)  # Balanced for GPU capacity
 
     async def start_session(self):
         if self.session is None or self.session.closed:
@@ -1205,6 +1205,7 @@ class KoboldAPI:
             return False
 
     async def generate(self, prompt: str, max_tokens: int = 100) -> str:
+        start_time = datetime.now()
         async with self._semaphore:  # Limit concurrent requests
             if not self.session or self.session.closed:
                 raise RuntimeError("API session is not started or has been closed.")
@@ -1213,6 +1214,7 @@ class KoboldAPI:
                 "top_p": 0.9, "min_p": 0.05, "rep_pen": 1.1,
                 "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:", "*giggles*", "*blushes*", "\n*"]
             }
+            logger.info(f"[KOBOLD] Starting generation at {start_time}, prompt: {prompt[:50]}...")
             try:
                 async with self.session.post(self.base_url, json=payload, timeout=30) as response:  # Faster timeout for high load
                     if response.status == 200:
@@ -1224,16 +1226,20 @@ class KoboldAPI:
                             char_name = CHARACTERS[char_key]['full_name']
                             if text.lower().startswith(char_name.lower() + ":"):
                                 text = text[len(char_name)+1:].lstrip()
+                        
+                        end_time = datetime.now()
+                        duration = (end_time - start_time).total_seconds()
+                        logger.info(f"[KOBOLD] ✅ Generation completed in {duration:.2f}s: {text[:100]}...")
                         return text
                     else:
                         logger.error(f"Kobold API returned status {response.status}")
                         return ""
             except asyncio.TimeoutError:
-                logger.error("Kobold API request timed out after 30 seconds.")
-                return ""
+                logger.error(f"[KOBOLD TIMEOUT] Request timed out after 30 seconds for prompt: {prompt[:100]}...")
+                return "Hey there! Sorry, I'm thinking a bit slow right now... What's on your mind? 😊"
             except aiohttp.ClientError as e:
-                logger.error(f"Kobold API client error during generation: {e}")
-                return ""
+                logger.error(f"[KOBOLD ERROR] Client error during generation: {e}")
+                return "I'm having some connection issues... let's try chatting again! 💕"
 
 def classify_image_nsfw(image_url: str, api_token: str) -> str:
     """Classifies the image as 'normal', 'sexy', or 'porn' using Replicate's NSFW model."""
@@ -2738,10 +2744,11 @@ class SecretShareBot:
                 return
         user_session.message_count_since_last_image += 1
         
-        # Initialize and start robust typing indicator
+        # Initialize and start typing indicator IMMEDIATELY
         if not user_session.typing_manager:
             user_session.typing_manager = TypingManager(context.bot, user_id)
-        await user_session.typing_manager.start_typing()
+        # Start typing indicator before any processing
+        asyncio.create_task(user_session.typing_manager.start_typing())
         # --- EARLY UPSALE CHECKS (move all upsell logic here, before AI response) ---
         # Prevent back-to-back upsells
         now = datetime.now(timezone.utc)

@@ -808,12 +808,11 @@ class TypingManager:
                 pass
     
     async def _simple_refresh(self):
-        """Simple typing refresh every 4 seconds"""
+        """Lightweight typing refresh - only once after 4.5 seconds"""
         try:
-            while self.is_active:
-                await asyncio.sleep(4)
-                if self.is_active:
-                    await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+            await asyncio.sleep(4.5)  # Single refresh after 4.5 seconds
+            if self.is_active:  # Check if still needed
+                await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
         except (asyncio.CancelledError, Exception):
             pass
 
@@ -870,16 +869,38 @@ class UserData:
         return False
 
 class Database:
-    """Handles all Supabase database operations."""
-
+    """Handles all Supabase database operations with async optimization."""
+    
+    # Class-level cache for frequently accessed data
+    _user_cache = {}
+    _cache_timeout = 30  # seconds
+    
     @staticmethod
-    def get_or_create_user(user_id: int, username: str) -> Optional[Dict]:
-        """Fetches a user from the database. If they don't exist, creates them."""
+    async def get_or_create_user(user_id: int, username: str) -> Optional[Dict]:
+        """Fetches a user from the database with caching for performance."""
+        # Check cache first
+        cache_key = f"user_{user_id}"
+        if cache_key in Database._user_cache:
+            cached_data, timestamp = Database._user_cache[cache_key]
+            if (datetime.now() - timestamp).seconds < Database._cache_timeout:
+                return cached_data
+        
         try:
-            Database.reset_daily_limits_if_needed(user_id)
-            result = supabase.table('users').select('*').eq('telegram_id', user_id).single().execute()
-            supabase.table('users').update({'last_seen': datetime.now(timezone.utc).isoformat()}).eq('telegram_id', user_id).execute()
-            return result.data
+            await Database.reset_daily_limits_if_needed(user_id)
+            # Run database operations in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            
+            def get_user():
+                result = supabase.table('users').select('*').eq('telegram_id', user_id).single().execute()
+                supabase.table('users').update({'last_seen': datetime.now(timezone.utc).isoformat()}).eq('telegram_id', user_id).execute()
+                return result.data
+            
+            user_data = await loop.run_in_executor(None, get_user)
+            
+            # Cache the result
+            Database._user_cache[cache_key] = (user_data, datetime.now())
+            return user_data
+            
         except Exception as e:
             logger.info(f"User {user_id} not found, creating new entry. Reason: {e}")
             try:
@@ -894,29 +915,42 @@ class Database:
                     'age_verified': False,
                     'last_seen': now_iso
                 }
-                insert_result = supabase.table('users').insert(new_user_data).execute()
-                return insert_result.data[0]
+                
+                def create_user():
+                    return supabase.table('users').insert(new_user_data).execute().data[0]
+                
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, create_user)
+                
+                # Cache the new user
+                Database._user_cache[cache_key] = (result, datetime.now())
+                return result
+                
             except Exception as insert_e:
                 logger.error(f"CRITICAL: Could not create new user {user_id} in database. Error: {insert_e}")
                 return None
 
     @staticmethod
-    def reset_daily_limits_if_needed(user_id: int):
+    async def reset_daily_limits_if_needed(user_id: int):
         """Checks if the user's last message was before today (UTC) and resets their daily limit."""
         try:
-            user_res = supabase.table('users').select('last_message_date').eq('telegram_id', user_id).single().execute()
-            user_data = user_res.data
-            
-            if user_data and user_data.get('last_message_date'):
-                last_date = datetime.fromisoformat(user_data['last_message_date']).date()
-                today_utc = datetime.now(timezone.utc).date()
+            def check_and_reset():
+                user_res = supabase.table('users').select('last_message_date').eq('telegram_id', user_id).single().execute()
+                user_data = user_res.data
                 
-                if last_date < today_utc:
-                    logger.info(f"Resetting daily message limit for user {user_id}.")
-                    supabase.table('users').update({
-                        'messages_today': 0,
-                        'last_message_date': datetime.now(timezone.utc).isoformat()
-                    }).eq('telegram_id', user_id).execute()
+                if user_data and user_data.get('last_message_date'):
+                    last_date = datetime.fromisoformat(user_data['last_message_date']).date()
+                    today_utc = datetime.now(timezone.utc).date()
+                    
+                    if last_date < today_utc:
+                        logger.info(f"Resetting daily message limit for user {user_id}.")
+                        supabase.table('users').update({
+                            'messages_today': 0,
+                            'last_message_date': datetime.now(timezone.utc).isoformat()
+                        }).eq('telegram_id', user_id).execute()
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, check_and_reset)
         except Exception as e:
             logger.info(f"Could not check daily limit for user {user_id} (they might be new). Error: {e}")
 
@@ -1174,6 +1208,8 @@ class KoboldAPI:
     def __init__(self, base_url: str):
         self.base_url = base_url
         self.session = None
+        # Limit concurrent requests to prevent Kobold overload
+        self._semaphore = asyncio.Semaphore(3)  # Max 3 concurrent requests
 
     async def start_session(self):
         if self.session is None or self.session.closed:
@@ -1200,34 +1236,35 @@ class KoboldAPI:
             return False
 
     async def generate(self, prompt: str, max_tokens: int = 100) -> str:
-        if not self.session or self.session.closed:
-            raise RuntimeError("API session is not started or has been closed.")
-        payload = {
-            "prompt": prompt, "max_length": max_tokens, "temperature": 0.65,
-            "top_p": 0.9, "min_p": 0.05, "rep_pen": 1.1,
-            "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:", "*giggles*", "*blushes*", "\n*"]
-        }
-        try:
-            async with self.session.post(self.base_url, json=payload, timeout=90) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    text = data['results'][0]['text'].strip()
-                    if "User:" in text: text = text.split("User:")[0].strip()
-                    if "<|im_start|>" in text: text = text.split("<|im_start|>")[0].strip()
-                    for char_key in CHARACTERS:
-                        char_name = CHARACTERS[char_key]['full_name']
-                        if text.lower().startswith(char_name.lower() + ":"):
-                            text = text[len(char_name)+1:].lstrip()
-                    return text
-                else:
-                    logger.error(f"Kobold API returned status {response.status}")
-                    return ""
-        except asyncio.TimeoutError:
-            logger.error("Kobold API request timed out after 90 seconds.")
-            return ""
-        except aiohttp.ClientError as e:
-            logger.error(f"Kobold API client error during generation: {e}")
-            return ""
+        async with self._semaphore:  # Limit concurrent requests
+            if not self.session or self.session.closed:
+                raise RuntimeError("API session is not started or has been closed.")
+            payload = {
+                "prompt": prompt, "max_length": max_tokens, "temperature": 0.65,
+                "top_p": 0.9, "min_p": 0.05, "rep_pen": 1.1,
+                "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:", "*giggles*", "*blushes*", "\n*"]
+            }
+            try:
+                async with self.session.post(self.base_url, json=payload, timeout=60) as response:  # Keep 60s for longer responses
+                    if response.status == 200:
+                        data = await response.json()
+                        text = data['results'][0]['text'].strip()
+                        if "User:" in text: text = text.split("User:")[0].strip()
+                        if "<|im_start|>" in text: text = text.split("<|im_start|>")[0].strip()
+                        for char_key in CHARACTERS:
+                            char_name = CHARACTERS[char_key]['full_name']
+                            if text.lower().startswith(char_name.lower() + ":"):
+                                text = text[len(char_name)+1:].lstrip()
+                        return text
+                    else:
+                        logger.error(f"Kobold API returned status {response.status}")
+                        return ""
+            except asyncio.TimeoutError:
+                logger.error("Kobold API request timed out after 60 seconds.")
+                return ""
+            except aiohttp.ClientError as e:
+                logger.error(f"Kobold API client error during generation: {e}")
+                return ""
 
 def classify_image_nsfw(image_url: str, api_token: str) -> str:
     """Classifies the image as 'normal', 'sexy', or 'porn' using Replicate's NSFW model."""
@@ -1402,7 +1439,9 @@ class VideoGenerator:
         negative_prompt = (
             "(extra hands, extra faces, background people, crowd, group, couple:2.0), "
             "(amputee, dismembered, extra limbs, extra fingers, mutated hands, disfigured, bad anatomy, ugly, malformed, floating limbs, disconnected limbs:2.0), "
-            "3d, cartoon, anime, painting, illustration, (deformed, distorted:1.5), poorly drawn, unreal, watermark, signature, text, blurry, morbid, mutated, mutilated, bright background, outdoor, day time, airbrushed skin, (worst quality:2),(low quality:2),(blurry:2),bad_prompt, text, (bad hands), bad eyes, missing fingers, fused fingers, too many fingers,(interlocked fingers:1.2), extra arms, extra legs, long neck, cross-eyed, negative_hand, negative_hand-neg, text, label, caption"
+            "(distorted hands, mangled hands, twisted fingers, bent fingers, weird hands, hand deformity:2.5), "
+            "(body distortion, twisted body, warped features, morphing, melting:2.0), "
+            "3d, cartoon, anime, painting, illustration, (deformed, distorted:1.5), poorly drawn, unreal, watermark, signature, text, blurry, morbid, mutated, mutilated, bright background, outdoor, day time, airbrushed skin, (worst quality:2),(low quality:2),(blurry:2),bad_prompt, text, (bad hands), bad eyes, missing fingers, fused fingers, too many fingers,(interlocked fingers:1.2), extra arms, extra legs, long neck, cross-eyed, negative_hand, negative_hand-neg, text, label, caption, glitchy, artifacting, pixelated, grainy"
         )
         
         # Prepare payload for Wavespeed API
@@ -1457,7 +1496,7 @@ class VideoGenerator:
             return None
 
     def _sanitize_video_prompt(self, prompt: str) -> str:
-        """Sanitize video prompt to avoid content filtering."""
+        """Sanitize video prompt and add quality enhancers to prevent distorted hands/bodies."""
         # Remove or replace potentially problematic words
         problematic_words = [
             'nude', 'naked', 'sexual', 'sexy', 'seductive', 'provocative', 'erotic',
@@ -1474,11 +1513,21 @@ class VideoGenerator:
         safe_prompt = safe_prompt.replace('pose', 'position')
         safe_prompt = safe_prompt.replace('look', 'gaze')
         
-        # Ensure it's not empty
+        # Add quality enhancers to prevent distorted hands/body parts
+        quality_enhancers = [
+            "perfect hands", "beautiful hands", "anatomically correct", 
+            "high quality", "professional lighting", "cinematic quality",
+            "detailed facial features", "smooth movement", "realistic proportions"
+        ]
+        
+        # Ensure it's not empty and add quality terms
         if not safe_prompt.strip():
             safe_prompt = "elegant woman, graceful movement, cinematic lighting, artistic composition"
         
-        return safe_prompt.strip()
+        # Add quality enhancers to the prompt
+        enhanced_prompt = f"{safe_prompt.strip()}, {', '.join(quality_enhancers)}"
+        
+        return enhanced_prompt
 
 
 
@@ -1776,12 +1825,22 @@ class ElevenLabsManager:
 
 class SecretShareBot:
     """Main bot class with v69 enhancements for voice integration."""
+    
+    # Static response cache for common messages
+    _response_cache = {
+        "age_verification": "Welcome! Before we can continue, I need to verify that you're at least 18 years old. This is required for our adult-oriented content. ✨",
+        "character_selection": "Great! Now let's choose your character. Each one has their own unique personality and style. 💕",
+        "scenario_selection": "Perfect! Now pick a scenario that sounds exciting to you. Each one creates a different romantic atmosphere. 🌟"
+    }
+    
     def __init__(self, application: Application):
        self.application = application
        self.kobold_api = KoboldAPI(KOBOLD_URL)
        self.image_generator = ImageGenerator(REPLICATE_API_TOKEN or "", self.kobold_api)
        self.video_generator = VideoGenerator(WAVESPEED_API_TOKEN or "")
        self.elevenlabs_manager = ElevenLabsManager(ELEVENLABS_API_KEY or "")
+       # Request queue to prevent overwhelming the system
+       self._request_semaphore = asyncio.Semaphore(15)  # Max 15 concurrent message handlers
        self.db = Database()
        self.kobold_available = False
        self.active_users: Dict[int, UserData] = {}
@@ -2337,7 +2396,7 @@ class SecretShareBot:
         """Refresh user data when they return from WebApp or after payment - FRONTEND INTEGRATION"""
         try:
             # Always get fresh data from database
-            updated_user = Database.get_or_create_user(user_id, username)
+            updated_user = await Database.get_or_create_user(user_id, username)
             if updated_user:
                 # Update or create user session with fresh data
                 if user_id in self.active_users:
@@ -2634,17 +2693,19 @@ class SecretShareBot:
             logger.error(f"[CALL END] Error processing call end for {call_id}: {e}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Handle WebApp data from frontend
-        if update.message and update.message.web_app_data:
-            await self.handle_webapp_data(update, context)
-            return
-            
-        if not update.message or not update.message.text:
-            return
-        user_tg = update.effective_user
-        user_id = user_tg.id
-        user_message = update.message.text
-        logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
+        # Request queuing to prevent system overload
+        async with self._request_semaphore:
+            # Handle WebApp data from frontend
+            if update.message and update.message.web_app_data:
+                await self.handle_webapp_data(update, context)
+                return
+                
+            if not update.message or not update.message.text:
+                return
+            user_tg = update.effective_user
+            user_id = user_tg.id
+            user_message = update.message.text
+            logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
         
         # FRONTEND INTEGRATION: Refresh user data when they return from WebApp or any interaction
         await self._refresh_user_data_on_return(user_id, user_tg.username or "")
@@ -2653,10 +2714,18 @@ class SecretShareBot:
         user_session = self.active_users.get(user_id)
         if user_session and user_session.premium_offer_state:
             if user_session.premium_offer_state.get('type') == 'voice_call' and user_session.premium_offer_state.get('status') == 'waiting_for_phone':
-                await self.handle_voice_call_phone_collection(update, context, user_id, user_message)
-                return
+                # Allow user to change their mind with certain phrases
+                change_mind_phrases = ["no", "nevermind", "never mind", "not now", "cancel", "stop", "skip", "let's do something else", "i don't want to", "continue chat", "keep chatting"]
+                if any(phrase in user_message.lower() for phrase in change_mind_phrases):
+                    # User changed their mind - clear the state and continue conversation
+                    user_session.premium_offer_state = {}
+                    await update.message.reply_text("No worries! Let's continue our conversation instead. What would you like to talk about? 😊")
+                    return
+                else:
+                    await self.handle_voice_call_phone_collection(update, context, user_id, user_message)
+                    return
         
-        user_db_data = self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
+        user_db_data = await self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
         if not user_db_data:
             await update.message.reply_text("Sorry, there was a problem accessing your profile. Please try again later. 😟")
             return
@@ -2687,7 +2756,7 @@ class SecretShareBot:
         
         # Only enforce daily limits for FREE users (non-subscribed, non-admin)
         if not is_subscribed and not is_admin:
-            current_user_data = self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
+            current_user_data = await self.db.get_or_create_user(user_id, user_tg.username or "Unknown")
             messages_today = current_user_data.get('messages_today', 0) if current_user_data else 0
             
             logger.info(f"[MESSAGE LIMIT] Free user {user_id}: {messages_today}/{DAILY_MESSAGE_LIMIT} messages today")
@@ -3009,7 +3078,7 @@ class SecretShareBot:
            # Reset to fresh session
            self.active_users[user_id] = UserData()
        
-       db_user = self.db.get_or_create_user(user_id, user.username or "Unknown")
+       db_user = await self.db.get_or_create_user(user_id, user.username or "Unknown")
 
        if not db_user:
             await update.message.reply_text("Sorry, there was a problem creating your profile. Please try again later. 😟")
@@ -3018,8 +3087,7 @@ class SecretShareBot:
        if not db_user.get('age_verified', False):
            keyboard = [[InlineKeyboardButton("✅ Yes, I am 18 or older", callback_data="verify_age_yes")], [InlineKeyboardButton("❌ No, I am under 18", callback_data="verify_age_no")]]
            await update.message.reply_text(
-               "Welcome to Secret Share! This bot is for adults only.\n\n"
-               "*Please confirm you are 18 years of age or older to continue.*",
+               self._response_cache["age_verification"] + "\n\n*Please confirm you are 18 years of age or older to continue.*",
                reply_markup=InlineKeyboardMarkup(keyboard),
                parse_mode=ParseMode.MARKDOWN
            )

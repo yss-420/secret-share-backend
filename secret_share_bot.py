@@ -1324,10 +1324,14 @@ class ImageGenerator:
                 user_message
             )
             negative_prompt = (
-                "(two people, couple, group, men, boy, male, another person, other people, third person:2.0), "
-                "(extra hands, extra faces, background people, crowd, group, couple:2.0), "
-                "(amputee, dismembered, extra limbs, extra fingers, mutated hands, disfigured, bad anatomy, ugly, malformed, floating limbs, disconnected limbs:2.0), "
-                "3d, cartoon, anime, painting, illustration, (deformed, distorted:1.5), poorly drawn, unreal, watermark, signature, text, blurry, morbid, mutated, mutilated, bright background, outdoor, day time, airbrushed skin, (worst quality:2),(low quality:2),(blurry:2),bad_prompt, text, (bad hands), bad eyes, missing fingers, fused fingers, too many fingers,(interlocked fingers:1.2), extra arms, extra legs, long neck, cross-eyed, negative_hand, negative_hand-neg, text, label, caption"
+                "(two people, couple, group, men, boy, male, another person, other people, third person:2.5), "
+                "(extra hands, extra faces, background people, crowd, group, couple:2.5), "
+                "(amputee, dismembered, extra limbs, extra fingers, mutated hands, disfigured, bad anatomy, ugly, malformed, floating limbs, disconnected limbs:3.0), "
+                "(distorted hands, mangled hands, twisted fingers, bent fingers, weird hands, hand deformity, deformed hands, malformed hands:3.5), "
+                "(third hand, multiple hands, too many hands, hand mutation, hand distortion, gross hands, scary hands:3.0), "
+                "(missing fingers, extra fingers, fused fingers, webbed fingers, long fingers, short fingers:2.8), "
+                "(broken hands, damaged hands, injured hands, cut hands, severed hands:3.2), "
+                "3d, cartoon, anime, painting, illustration, (deformed, distorted:2.0), poorly drawn, unreal, watermark, signature, text, blurry, morbid, mutated, mutilated, bright background, outdoor, day time, airbrushed skin, (worst quality:2.5),(low quality:2.5),(blurry:2.5),bad_prompt, text, (bad hands:3.0), bad eyes, missing fingers, fused fingers, too many fingers,(interlocked fingers:2.0), extra arms, extra legs, long neck, cross-eyed, negative_hand, negative_hand-neg, text, label, caption, nightmare, horror, gory, gore, blood, violent"
             )
             if user_session.free_images_sent == 0:
                 negative_prompt += ", (nude, naked, topless, bare breasts, bare chest, exposed body, nsfw, explicit:2.0)"
@@ -1418,11 +1422,14 @@ class VideoGenerator:
         
         # Use the same negative prompt as image generation
         negative_prompt = (
-            "(extra hands, extra faces, background people, crowd, group, couple:2.0), "
-            "(amputee, dismembered, extra limbs, extra fingers, mutated hands, disfigured, bad anatomy, ugly, malformed, floating limbs, disconnected limbs:2.0), "
-            "(distorted hands, mangled hands, twisted fingers, bent fingers, weird hands, hand deformity:2.5), "
-            "(body distortion, twisted body, warped features, morphing, melting:2.0), "
-            "3d, cartoon, anime, painting, illustration, (deformed, distorted:1.5), poorly drawn, unreal, watermark, signature, text, blurry, morbid, mutated, mutilated, bright background, outdoor, day time, airbrushed skin, (worst quality:2),(low quality:2),(blurry:2),bad_prompt, text, (bad hands), bad eyes, missing fingers, fused fingers, too many fingers,(interlocked fingers:1.2), extra arms, extra legs, long neck, cross-eyed, negative_hand, negative_hand-neg, text, label, caption, glitchy, artifacting, pixelated, grainy"
+            "(extra hands, extra faces, background people, crowd, group, couple:2.5), "
+            "(amputee, dismembered, extra limbs, extra fingers, mutated hands, disfigured, bad anatomy, ugly, malformed, floating limbs, disconnected limbs:3.0), "
+            "(distorted hands, mangled hands, twisted fingers, bent fingers, weird hands, hand deformity, deformed hands, malformed hands:3.5), "
+            "(third hand, multiple hands, too many hands, hand mutation, hand distortion, gross hands, scary hands:3.0), "
+            "(body distortion, twisted body, warped features, morphing, melting, gory, gore, blood, violent:3.0), "
+            "(missing fingers, extra fingers, fused fingers, webbed fingers, long fingers, short fingers:2.8), "
+            "(broken hands, damaged hands, injured hands, cut hands, severed hands:3.2), "
+            "3d, cartoon, anime, painting, illustration, (deformed, distorted:2.0), poorly drawn, unreal, watermark, signature, text, blurry, morbid, mutated, mutilated, bright background, outdoor, day time, airbrushed skin, (worst quality:2.5),(low quality:2.5),(blurry:2.5),bad_prompt, text, (bad hands:3.0), bad eyes, missing fingers, fused fingers, too many fingers,(interlocked fingers:2.0), extra arms, extra legs, long neck, cross-eyed, negative_hand, negative_hand-neg, text, label, caption, glitchy, artifacting, pixelated, grainy, nightmare, horror"
         )
         
         # Prepare payload for Wavespeed API
@@ -1494,11 +1501,14 @@ class VideoGenerator:
         safe_prompt = safe_prompt.replace('pose', 'position')
         safe_prompt = safe_prompt.replace('look', 'gaze')
         
-        # Add quality enhancers to prevent distorted hands/body parts
+        # Add ULTRA quality enhancers to prevent distorted hands/body parts
         quality_enhancers = [
-            "perfect hands", "beautiful hands", "anatomically correct", 
+            "perfect hands", "beautiful hands", "correct hands", "normal hands", "human hands",
+            "anatomically correct", "proper anatomy", "realistic anatomy", 
+            "5 fingers per hand", "correct finger count", "well-formed hands",
             "high quality", "professional lighting", "cinematic quality",
-            "detailed facial features", "smooth movement", "realistic proportions"
+            "detailed facial features", "smooth movement", "realistic proportions",
+            "masterpiece quality", "photorealistic", "flawless anatomy"
         ]
         
         # Ensure it's not empty and add quality terms
@@ -2929,27 +2939,28 @@ class SecretShareBot:
             prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
             initial_prompt = "".join(prompt_parts)
             
-            # FORCE CONTEXT TRIMMING - Keep under 400 tokens for ultra-fast processing
-            # More accurate token estimation (words * 1.3 for tokens)
-            context_tokens = int(len(initial_prompt.split()) * 1.3)
-            if context_tokens > 400:
-                logger.info(f"[CONTEXT SHIFT] Forcing trim from {context_tokens} tokens - mimicking Kobold behavior")
-                
-                # Trim to only last 3 turns + system prompt
-                prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
-                trimmed_history = user_session.conversation_history[-3:]
-                for turn in trimmed_history:
-                    prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
-                
-                prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
-                prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
-                final_prompt = "".join(prompt_parts)
-                
-                final_tokens = int(len(final_prompt.split()) * 1.3)
-                logger.info(f"[CONTEXT SHIFT] ✅ Trimmed to {final_tokens} tokens - targeting 10s generation")
-            else:
-                final_prompt = initial_prompt
-                logger.info(f"[CONTEXT] Context size: {context_tokens} tokens - within limits")
+            # FORCE CONTEXT TRIMMING - ALWAYS trim to last 2 turns for guaranteed speed
+            # Character count based estimation (more accurate)
+            char_count = len(initial_prompt)
+            estimated_tokens = char_count // 3  # ~3 chars per token average
+            
+            logger.info(f"[CONTEXT] Initial size: {estimated_tokens} tokens ({char_count} chars)")
+            
+            # ALWAYS use only last 2 turns for maximum speed (like after Kobold's context shift)
+            prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
+            
+            # Ultra-minimal history - only last 2 turns
+            minimal_history = user_session.conversation_history[-2:] if len(user_session.conversation_history) >= 2 else user_session.conversation_history
+            for turn in minimal_history:
+                prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
+            
+            prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
+            prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
+            final_prompt = "".join(prompt_parts)
+            
+            final_char_count = len(final_prompt)
+            final_tokens = final_char_count // 3
+            logger.info(f"[CONTEXT SHIFT] ✅ FORCED to minimal context: {final_tokens} tokens ({final_char_count} chars) - targeting 10s")
 
             raw_bot_response = ""
             if self.kobold_available:

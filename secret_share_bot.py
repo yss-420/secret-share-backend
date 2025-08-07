@@ -780,14 +780,15 @@ class TypingManager:
         self.is_active = False
         
     async def start_typing(self):
-        """Start the typing indicator - emergency simple mode"""
+        """Start the typing indicator with smart refresh"""
         if self.is_active:
             return
             
         self.is_active = True
         try:
             await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
-            # NO background refresh task during high load
+            # Start efficient refresh task
+            self.task = asyncio.create_task(self._smart_refresh())
         except Exception:
             pass
         
@@ -806,15 +807,18 @@ class TypingManager:
             except asyncio.CancelledError:
                 pass
     
-    async def _simple_refresh(self):
-        """Refresh typing every 4 seconds until stopped"""
+    async def _smart_refresh(self):
+        """Smart typing refresh - efficient 4-second intervals"""
         try:
             while self.is_active:
                 await asyncio.sleep(4)  # Wait 4 seconds
-                if self.is_active:  # Check if still needed
-                    await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
-        except (asyncio.CancelledError, Exception):
-            pass
+                if self.is_active:  # Double-check before API call
+                    try:
+                        await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+                    except Exception:
+                        break  # Stop on any error to prevent spam
+        except asyncio.CancelledError:
+            pass  # Clean shutdown
 
 
 @dataclass
@@ -1177,8 +1181,8 @@ class KoboldAPI:
     def __init__(self, base_url: str):
         self.base_url = base_url
         self.session = None
-        # Optimized for single GPU - limit to prevent overload
-        self._semaphore = asyncio.Semaphore(2)  # Very low for maximum speed per request
+        # Optimized for single GPU - balanced speed and throughput
+        self._semaphore = asyncio.Semaphore(4)  # 4 concurrent users for better experience
 
     async def start_session(self):
         if self.session is None or self.session.closed:
@@ -1218,7 +1222,7 @@ class KoboldAPI:
             }
             logger.info(f"[KOBOLD FAST] Starting generation, prompt: {prompt[:50]}...")
             try:
-                async with self.session.post(self.base_url, json=payload, timeout=45) as response:  # Reduced timeout for faster failure
+                async with self.session.post(self.base_url, json=payload, timeout=60) as response:  # Extended timeout for complete generation
                     if response.status == 200:
                         data = await response.json()
                         text = data['results'][0]['text'].strip()
@@ -1237,7 +1241,7 @@ class KoboldAPI:
                         logger.error(f"Kobold API returned status {response.status}")
                         return ""
             except asyncio.TimeoutError:
-                logger.error(f"[KOBOLD TIMEOUT] Request timed out after 45 seconds for prompt: {prompt[:100]}...")
+                logger.error(f"[KOBOLD TIMEOUT] Request timed out after 60 seconds for prompt: {prompt[:100]}...")
                 return "Hey there! Sorry, I'm thinking a bit slow right now... What's on your mind? 😊"
             except aiohttp.ClientError as e:
                 logger.error(f"[KOBOLD ERROR] Client error during generation: {e}")
@@ -2749,8 +2753,8 @@ class SecretShareBot:
         # Initialize and start typing indicator IMMEDIATELY
         if not user_session.typing_manager:
             user_session.typing_manager = TypingManager(context.bot, user_id)
-        # Start typing indicator before any processing
-        asyncio.create_task(user_session.typing_manager.start_typing())
+        # Start typing indicator synchronously for instant response
+        await user_session.typing_manager.start_typing()
         # --- EARLY UPSALE CHECKS (move all upsell logic here, before AI response) ---
         # Prevent back-to-back upsells
         now = datetime.now(timezone.utc)
@@ -2914,7 +2918,7 @@ class SecretShareBot:
 
             raw_bot_response = ""
             if self.kobold_available:
-                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=80)
+                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=100)
             else:
                 raw_bot_response = "*I sigh softly.* My thoughts are a bit hazy right now... I can't seem to connect. Please try again in a little while."
 

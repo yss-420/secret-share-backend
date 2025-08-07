@@ -1175,11 +1175,10 @@ class Database:
 
 class KoboldAPI:
     def __init__(self, base_url: str):
-        self.base_urls = base_url.split(',') if ',' in base_url else [base_url]  # Support multiple URLs
-        self.current_index = 0
+        self.base_url = base_url
         self.session = None
-        # Increase concurrency since we have multiple endpoints
-        self._semaphore = asyncio.Semaphore(15)  # Higher limit for cluster
+        # Optimized for single GPU - limit to prevent overload
+        self._semaphore = asyncio.Semaphore(2)  # Very low for maximum speed per request
 
     async def start_session(self):
         if self.session is None or self.session.closed:
@@ -1192,50 +1191,34 @@ class KoboldAPI:
     async def check_availability(self) -> bool:
         if not self.session:
             await self.start_session()
-        
-        # Check all endpoints - at least one must be available
-        available_count = 0
-        for i, base_url in enumerate(self.base_urls):
-            check_url = base_url.replace('/api/v1/generate', '/api/v1/model')
-            try:
-                if self.session:
-                    async with self.session.get(check_url, timeout=3) as response:
-                        if response.status == 200:
-                            available_count += 1
-                            logger.info(f"Kobold endpoint {i+1}/{len(self.base_urls)} is available.")
-            except (asyncio.TimeoutError, aiohttp.ClientError) as e:
-                logger.warning(f"Kobold endpoint {i+1} unavailable: {e}")
-        
-        is_available = available_count > 0
-        logger.info(f"Kobold cluster status: {available_count}/{len(self.base_urls)} endpoints available")
-        return is_available
-
-    def _get_next_endpoint(self) -> str:
-        """Round-robin load balancing across multiple endpoints"""
-        if len(self.base_urls) == 1:
-            return self.base_urls[0]
-        
-        endpoint = self.base_urls[self.current_index]
-        self.current_index = (self.current_index + 1) % len(self.base_urls)
-        return endpoint
+        check_url = self.base_url.replace('/api/v1/generate', '/api/v1/model')
+        try:
+            if self.session:
+                async with self.session.get(check_url, timeout=3) as response:
+                    return response.status == 200
+            return False
+        except (asyncio.TimeoutError, aiohttp.ClientError):
+            return False
 
     async def generate(self, prompt: str, max_tokens: int = 100) -> str:
         start_time = datetime.now()
-        async with self._semaphore:  # Limit concurrent requests
+        async with self._semaphore:  # Limit concurrent requests for maximum single-GPU performance
             if not self.session or self.session.closed:
                 raise RuntimeError("API session is not started or has been closed.")
             
-            # Get next endpoint for load balancing
-            endpoint = self._get_next_endpoint()
-            
+            # Optimized payload for faster generation
             payload = {
-                "prompt": prompt, "max_length": max_tokens, "temperature": 0.65,
-                "top_p": 0.9, "min_p": 0.05, "rep_pen": 1.1,
-                "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:", "*giggles*", "*blushes*", "\n*"]
+                "prompt": prompt, 
+                "max_length": max_tokens, 
+                "temperature": 0.7,  # Slightly higher for faster generation
+                "top_p": 0.85,      # Reduced for faster sampling
+                "min_p": 0.1,       # Increased for faster decisions
+                "rep_pen": 1.05,    # Reduced for faster processing
+                "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:"]  # Fewer stop sequences
             }
-            logger.info(f"[KOBOLD CLUSTER] Using endpoint {endpoint}, prompt: {prompt[:50]}...")
+            logger.info(f"[KOBOLD FAST] Starting generation, prompt: {prompt[:50]}...")
             try:
-                async with self.session.post(endpoint, json=payload, timeout=75) as response:  # Extended timeout - never give up!
+                async with self.session.post(self.base_url, json=payload, timeout=45) as response:  # Reduced timeout for faster failure
                     if response.status == 200:
                         data = await response.json()
                         text = data['results'][0]['text'].strip()
@@ -1254,7 +1237,7 @@ class KoboldAPI:
                         logger.error(f"Kobold API returned status {response.status}")
                         return ""
             except asyncio.TimeoutError:
-                logger.error(f"[KOBOLD TIMEOUT] Request timed out after 75 seconds for prompt: {prompt[:100]}...")
+                logger.error(f"[KOBOLD TIMEOUT] Request timed out after 45 seconds for prompt: {prompt[:100]}...")
                 return "Hey there! Sorry, I'm thinking a bit slow right now... What's on your mind? 😊"
             except aiohttp.ClientError as e:
                 logger.error(f"[KOBOLD ERROR] Client error during generation: {e}")
@@ -2931,7 +2914,7 @@ class SecretShareBot:
 
             raw_bot_response = ""
             if self.kobold_available:
-                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=120)
+                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=80)
             else:
                 raw_bot_response = "*I sigh softly.* My thoughts are a bit hazy right now... I can't seem to connect. Please try again in a little while."
 

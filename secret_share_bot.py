@@ -808,11 +808,12 @@ class TypingManager:
                 pass
     
     async def _simple_refresh(self):
-        """Lightweight typing refresh - only once after 4.5 seconds"""
+        """Refresh typing every 4 seconds until stopped"""
         try:
-            await asyncio.sleep(4.5)  # Single refresh after 4.5 seconds
-            if self.is_active:  # Check if still needed
-                await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+            while self.is_active:
+                await asyncio.sleep(4)  # Wait 4 seconds
+                if self.is_active:  # Check if still needed
+                    await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
         except (asyncio.CancelledError, Exception):
             pass
 
@@ -3224,8 +3225,8 @@ class SecretShareBot:
            parse_mode=ParseMode.MARKDOWN
        )
        
-       # 2-second pause for users to read the premium features message
-       await asyncio.sleep(2)
+       # 1.5-second pause for users to read the premium features message
+       await asyncio.sleep(1.5)
 
        background_image_url = scenario.get("background_image_url")
        intro_text = f"_{scenario['intro_text']}_"

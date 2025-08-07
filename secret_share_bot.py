@@ -1178,7 +1178,7 @@ class KoboldAPI:
         self.base_url = base_url
         self.session = None
         # Limit concurrent requests to prevent Kobold overload
-        self._semaphore = asyncio.Semaphore(3)  # Max 3 concurrent requests
+        self._semaphore = asyncio.Semaphore(10)  # Increased for high load
 
     async def start_session(self):
         if self.session is None or self.session.closed:
@@ -1214,7 +1214,7 @@ class KoboldAPI:
                 "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:", "*giggles*", "*blushes*", "\n*"]
             }
             try:
-                async with self.session.post(self.base_url, json=payload, timeout=60) as response:  # Keep 60s for longer responses
+                async with self.session.post(self.base_url, json=payload, timeout=30) as response:  # Faster timeout for high load
                     if response.status == 200:
                         data = await response.json()
                         text = data['results'][0]['text'].strip()
@@ -1229,7 +1229,7 @@ class KoboldAPI:
                         logger.error(f"Kobold API returned status {response.status}")
                         return ""
             except asyncio.TimeoutError:
-                logger.error("Kobold API request timed out after 60 seconds.")
+                logger.error("Kobold API request timed out after 30 seconds.")
                 return ""
             except aiohttp.ClientError as e:
                 logger.error(f"Kobold API client error during generation: {e}")
@@ -2662,19 +2662,17 @@ class SecretShareBot:
             logger.error(f"[CALL END] Error processing call end for {call_id}: {e}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Emergency request limiting during high load
-        async with self._request_semaphore:
-            # Handle WebApp data from frontend
-            if update.message and update.message.web_app_data:
-                await self.handle_webapp_data(update, context)
-                return
-                
-            if not update.message or not update.message.text:
-                return
-            user_tg = update.effective_user
-            user_id = user_tg.id
-            user_message = update.message.text
-            logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
+        # Handle WebApp data from frontend
+        if update.message and update.message.web_app_data:
+            await self.handle_webapp_data(update, context)
+            return
+            
+        if not update.message or not update.message.text:
+            return
+        user_tg = update.effective_user
+        user_id = user_tg.id
+        user_message = update.message.text
+        logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
         
         # Skip user data refresh during high load to improve performance
         

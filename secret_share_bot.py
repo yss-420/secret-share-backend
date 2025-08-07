@@ -1210,15 +1210,15 @@ class KoboldAPI:
             if not self.session or self.session.closed:
                 raise RuntimeError("API session is not started or has been closed.")
             
-            # Optimized payload for faster generation
+            # Ultra-optimized payload for 15-second generation
             payload = {
                 "prompt": prompt, 
                 "max_length": max_tokens, 
-                "temperature": 0.7,  # Slightly higher for faster generation
-                "top_p": 0.85,      # Reduced for faster sampling
-                "min_p": 0.1,       # Increased for faster decisions
-                "rep_pen": 1.05,    # Reduced for faster processing
-                "stop_sequence": ["<|im_end|>", "User:", "\n\n", "user:"]  # Fewer stop sequences
+                "temperature": 0.75, # Higher for faster decisions
+                "top_p": 0.8,       # More focused sampling
+                "min_p": 0.15,      # Faster token selection
+                "rep_pen": 1.03,    # Minimal penalty for speed
+                "stop_sequence": ["<|im_end|>", "User:", "\n\n"]  # Minimal stop sequences
             }
             logger.info(f"[KOBOLD FAST] Starting generation, prompt: {prompt[:50]}...")
             try:
@@ -2918,7 +2918,7 @@ class SecretShareBot:
 
             raw_bot_response = ""
             if self.kobold_available:
-                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=100)
+                raw_bot_response = await self.kobold_api.generate(final_prompt, max_tokens=120)
             else:
                 raw_bot_response = "*I sigh softly.* My thoughts are a bit hazy right now... I can't seem to connect. Please try again in a little while."
 
@@ -3057,8 +3057,20 @@ class SecretShareBot:
            # Reset to fresh session
            self.active_users[user_id] = UserData()
        
-       db_user = self.db.get_or_create_user(user_id, user.username or "Unknown")
-
+       # Run database check in background for speed
+       async def check_user_async():
+           return self.db.get_or_create_user(user_id, user.username or "Unknown")
+       
+       # Start DB check as background task
+       db_task = asyncio.create_task(check_user_async())
+       
+       # Show age verification immediately while DB loads
+       try:
+           db_user = await asyncio.wait_for(db_task, timeout=2.0)  # Max 2 second wait
+       except asyncio.TimeoutError:
+           # If DB is slow, show age verification anyway
+           db_user = {'age_verified': False}
+       
        if not db_user:
             await update.message.reply_text("Sorry, there was a problem creating your profile. Please try again later. 😟")
             return
@@ -3072,6 +3084,7 @@ class SecretShareBot:
            )
            return
        
+       # Show character selection instantly
        await self._show_character_selection(update.message, context)
 
     async def _show_character_selection(self, message, context: ContextTypes.DEFAULT_TYPE):

@@ -3280,28 +3280,28 @@ class SecretShareBot:
             parse_mode=ParseMode.MARKDOWN
         )
 
-        # No delay here – show scenario background immediately after selection
-        # (Keep flow instant up to scenario display)
+        # 1–2 second break before background + scenario text
+        await asyncio.sleep(1.6)
+
+        # Show scenario background with scenario text together
         background_image_url = scenario.get("background_image_url")
         intro_text = f"_{scenario['intro_text']}_"
         if background_image_url:
             try:
-                # Send image first with no caption
                 await context.bot.send_photo(
                     chat_id=user_id,
-                    photo=background_image_url
+                    photo=background_image_url,
+                    caption=intro_text,
+                    parse_mode=ParseMode.MARKDOWN
                 )
             except Exception as e:
                 logger.error(f"Failed to send background photo '{background_image_url}'. Error: {e}")
-            # 1.5s gap before sending the scenario text
-            await asyncio.sleep(1.5)
-            await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
+                await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
         else:
-            # No background image; send the scenario text immediately
             await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
 
-        # 1.7s beat before character intro (image + message)
-        await asyncio.sleep(1.7)
+        # 2–2.5 second beat before character intro (image + message)
+        await asyncio.sleep(2.3)
 
         intro_image_url = scenario.get("intro_image_url")
         first_message = scenario['first_message']

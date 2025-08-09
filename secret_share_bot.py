@@ -1835,6 +1835,8 @@ class SecretShareBot:
        self.db = Database()
        self.kobold_available = False
        self.active_users: Dict[int, UserData] = {}
+        # Fast-path cache: users who have verified age in this process lifetime
+        self.age_verified_cache = set()
        self.anticipation_jobs = {}  # user_id -> list of job references
        # Webhook security
        self._webhook_secret = os.getenv('TELEGRAM_WEBHOOK_SECRET', '')
@@ -3109,12 +3111,16 @@ class SecretShareBot:
            # Reset to fresh session
            self.active_users[user_id] = UserData()
        
-       # OPTIMIZED SPEED: Fast database check with instant fallback
+       # OPTIMIZED SPEED: Fast cache check, then quick DB with instant fallback
+       if user_id in self.age_verified_cache:
+           await self._show_character_selection(update.message, context)
+           return
+
        try:
-           # Quick database check with minimal timeout
+           # Quick database check with minimal timeout (but slightly higher to avoid false negatives)
            db_user = await asyncio.wait_for(
-               asyncio.create_task(self.db.get_or_create_user(user_id, user.username or "Unknown")),
-               timeout=0.5  # Super fast timeout
+               asyncio.to_thread(self.db.get_or_create_user, user_id, user.username or "Unknown"),
+               timeout=1.5
            )
        except (asyncio.TimeoutError, Exception):
            # If DB is slow, assume new user and show age verification
@@ -3126,6 +3132,8 @@ class SecretShareBot:
 
        # Check if already age verified - if yes, skip directly to character selection
        if db_user.get('age_verified', False):
+           # Cache for future instant starts
+           self.age_verified_cache.add(user_id)
            await self._show_character_selection(update.message, context)
            return
        
@@ -3173,9 +3181,12 @@ class SecretShareBot:
        await query.answer()
        
        if query.data == "verify_age_yes":
+           user_id = query.from_user.id
            # Set age verification in background for speed
-           asyncio.create_task(self.db.set_age_verified(query.from_user.id))
-           
+           asyncio.create_task(self.db.set_age_verified(user_id))
+           # Update in-memory cache for instant future starts
+           if hasattr(self, 'age_verified_cache'):
+               self.age_verified_cache.add(user_id)
            # Show character selection INSTANTLY
            await query.edit_message_text(f"*Thank you for verifying!* You've received **{WELCOME_GEMS_BONUS} FREE GEMS** 💎 to use on special features later.", parse_mode=ParseMode.MARKDOWN)
            # Remove delay - show character selection immediately
@@ -3269,8 +3280,8 @@ class SecretShareBot:
            parse_mode=ParseMode.MARKDOWN
        )
        
-       # 2.5-second pause for users to read the premium features message  
-       await asyncio.sleep(2.5)
+        # Faster pause to keep flow snappy
+        await asyncio.sleep(0.6)
 
        background_image_url = scenario.get("background_image_url")
        intro_text = f"_{scenario['intro_text']}_"
@@ -3288,7 +3299,7 @@ class SecretShareBot:
        else:
             await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
 
-       await asyncio.sleep(2.5)
+        await asyncio.sleep(0.6)
 
        intro_image_url = scenario.get("intro_image_url")
        first_message = scenario['first_message']

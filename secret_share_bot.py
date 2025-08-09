@@ -3238,89 +3238,89 @@ class SecretShareBot:
        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
     async def scenario_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-       query = update.callback_query
-       await query.answer()
-       
-       user_id = query.from_user.id
-       # Only initialize user_session if it does not exist
-       if user_id not in self.active_users:
-           logger.info(f"[SESSION INIT] Creating new session for user {user_id} (scenario_callback)")
-           self.active_users[user_id] = UserData()
-       user_session = self.active_users.get(user_id)
-       if not user_session:
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        # Only initialize user_session if it does not exist
+        if user_id not in self.active_users:
+            logger.info(f"[SESSION INIT] Creating new session for user {user_id} (scenario_callback)")
+            self.active_users[user_id] = UserData()
+        user_session = self.active_users.get(user_id)
+        if not user_session:
             logger.error(f"[SCENARIO] Could not find active session for user {user_id}")
             return
-       
-       try:
-           prefix, char_id, scenario_id = query.data.split('|', 2)
-       except ValueError:
-           logger.error(f"[CALLBACK] Could not unpack scenario data: {query.data}")
-           return
-       
-       user_session.current_character = char_id
-       user_session.current_scenario = scenario_id
-       character = CHARACTERS[char_id]
-       scenario = character["scenarios"][scenario_id]
 
-       # v68: Initialize character outfit and state
-       user_session.character_current_outfit = scenario['character_outfit']
-       user_session.clothing_state = "clothed"
-       user_session.state_transition_history = ["init->clothed"]
-       # Reset session message count on new scenario
-       user_session.session_message_count = 0
-       logger.info(f"[STATE] User {user_id} initialized with outfit: {user_session.character_current_outfit}")
-       
-       await query.delete_message()
+        try:
+            prefix, char_id, scenario_id = query.data.split('|', 2)
+        except ValueError:
+            logger.error(f"[CALLBACK] Could not unpack scenario data: {query.data}")
+            return
 
-       # Send premium features introduction message in bold
-       premium_intro_text = "*✨ A little secret... Want to take things to the next level? I respond to your desires. Try asking for a video or to hear my voice. Sometimes, I might even offer you something special myself... if you're lucky.*"
-       await context.bot.send_message(
-           chat_id=user_id, 
-           text=premium_intro_text, 
-           parse_mode=ParseMode.MARKDOWN
-       )
-       
-        # Faster pause to keep flow snappy
-       await asyncio.sleep(0.6)
+        user_session.current_character = char_id
+        user_session.current_scenario = scenario_id
+        character = CHARACTERS[char_id]
+        scenario = character["scenarios"][scenario_id]
 
-       background_image_url = scenario.get("background_image_url")
-       intro_text = f"_{scenario['intro_text']}_"
-       if background_image_url:
-           try:
-               await context.bot.send_photo(
-                   chat_id=user_id,
-                   photo=background_image_url,
-                   caption=intro_text,
-                   parse_mode=ParseMode.MARKDOWN
-               )
-           except Exception as e:
-               logger.error(f"Failed to send background photo '{background_image_url}'. Error: {e}")
-               await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
-       else:
+        # v68: Initialize character outfit and state
+        user_session.character_current_outfit = scenario['character_outfit']
+        user_session.clothing_state = "clothed"
+        user_session.state_transition_history = ["init->clothed"]
+        # Reset session message count on new scenario
+        user_session.session_message_count = 0
+        logger.info(f"[STATE] User {user_id} initialized with outfit: {user_session.character_current_outfit}")
+
+        await query.delete_message()
+
+        # Send premium features introduction message in bold
+        premium_intro_text = "*✨ A little secret... Want to take things to the next level? I respond to your desires. Try asking for a video or to hear my voice. Sometimes, I might even offer you something special myself... if you're lucky.*"
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=premium_intro_text,
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        # No delay here – show scenario background immediately after selection
+        # (Keep flow instant up to scenario display)
+        background_image_url = scenario.get("background_image_url")
+        intro_text = f"_{scenario['intro_text']}_"
+        if background_image_url:
+            try:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=background_image_url,
+                    caption=intro_text,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logger.error(f"Failed to send background photo '{background_image_url}'. Error: {e}")
+                await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
+        else:
             await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
 
-       await asyncio.sleep(0.6)
+        # 1–2 second beat between scenario background and character intro
+        await asyncio.sleep(1.2)
 
-       intro_image_url = scenario.get("intro_image_url")
-       first_message = scenario['first_message']
-       
-       user_session.conversation_history = [{"role": "assistant", "content": first_message}]
-       
-       if intro_image_url:
-           try:
-               await context.bot.send_photo(
-                   chat_id=user_id,
-                   photo=intro_image_url,
-                   caption=first_message,
-                   parse_mode=ParseMode.MARKDOWN
-               )
-           except Exception as e:
-               logger.error(f"Failed to send intro photo with caption. Error: {e}")
-               await context.bot.send_message(chat_id=user_id, text=first_message, parse_mode=ParseMode.MARKDOWN)
-       else:
-           await context.bot.send_message(chat_id=user_id, text=first_message, parse_mode=ParseMode.MARKDOWN)
-       
-       await self._schedule_follow_up(user_id)
+        intro_image_url = scenario.get("intro_image_url")
+        first_message = scenario['first_message']
+
+        user_session.conversation_history = [{"role": "assistant", "content": first_message}]
+
+        if intro_image_url:
+            try:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=intro_image_url,
+                    caption=first_message,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logger.error(f"Failed to send intro photo with caption. Error: {e}")
+                await context.bot.send_message(chat_id=user_id, text=first_message, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=first_message, parse_mode=ParseMode.MARKDOWN)
+
+        await self._schedule_follow_up(user_id)
 
     async def main_menu_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
        query = update.callback_query

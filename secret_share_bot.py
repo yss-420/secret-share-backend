@@ -2233,11 +2233,8 @@ class SecretShareBot:
         # If already ends with proper punctuation, return as is
         if text.endswith(('.', '!', '?')):
             return text
-        # Otherwise, trim to last full stop, exclamation, or question mark
-        last_punc = max(text.rfind(p) for p in ['.', '!', '?'])
-        if last_punc > 0:
-            return text[:last_punc+1].strip()
-        return text
+        # Do NOT truncate; just finalize politely
+        return (text + '.').strip()
 
     def _validate_and_fix_actions(self, text: str, user_name: str = "you") -> str:
         """
@@ -3030,8 +3027,8 @@ class SecretShareBot:
             completed_sentence_response = self._normalize_actions(raw_bot_response)
             completed_sentence_response = self._ensure_complete_sentence(completed_sentence_response)
             completed_sentence_response = self._validate_and_fix_actions(completed_sentence_response, user_session.user_name or "you")
-            # Keep responses tight (3 sentences, max 4 lines)
-            completed_sentence_response = self._trim_for_length(completed_sentence_response, max_sentences=3, max_lines=4, max_chars=500)
+            # Keep responses concise without cutting content: prefer 3–5 lines, 700 chars cap
+            completed_sentence_response = self._trim_for_length(completed_sentence_response, max_sentences=5, max_lines=5, max_chars=700)
             if not completed_sentence_response:
                 completed_sentence_response = "*I bite my lip, a thoughtful look in my eyes...* I don't know what to say."
 

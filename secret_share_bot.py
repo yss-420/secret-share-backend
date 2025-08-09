@@ -3286,20 +3286,22 @@ class SecretShareBot:
         intro_text = f"_{scenario['intro_text']}_"
         if background_image_url:
             try:
+                # Send image first with no caption
                 await context.bot.send_photo(
                     chat_id=user_id,
-                    photo=background_image_url,
-                    caption=intro_text,
-                    parse_mode=ParseMode.MARKDOWN
+                    photo=background_image_url
                 )
             except Exception as e:
                 logger.error(f"Failed to send background photo '{background_image_url}'. Error: {e}")
-                await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
+            # 1.5s gap before sending the scenario text
+            await asyncio.sleep(1.5)
+            await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
         else:
+            # No background image; send the scenario text immediately
             await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
 
-        # 1–2 second beat between scenario background and character intro
-        await asyncio.sleep(1.2)
+        # 1.7s beat before character intro (image + message)
+        await asyncio.sleep(1.7)
 
         intro_image_url = scenario.get("intro_image_url")
         first_message = scenario['first_message']

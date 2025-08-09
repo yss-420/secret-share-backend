@@ -2697,17 +2697,29 @@ class SecretShareBot:
         user_id = user_tg.id
         user_message = update.message.text
         logger.info(f"[DEBUG] User message: '{user_message}' (user_id={user_id})")
-        
-        # START TYPING INDICATOR INSTANTLY - before any processing
+
+        # START TYPING INDICATOR: fire instantly and keep it alive concurrently
         try:
+            # Immediate feedback (does not persist)
             await update.message.chat.send_action("typing")
         except Exception as e:
             logger.warning(f"[TYPING] Could not start instant typing for user {user_id}: {e}")
-        
-        # Skip user data refresh during high load to improve performance
-        
-        # Check if user is waiting to provide phone number for voice call
+
+        # Ensure a session exists early so we can attach a persistent typing manager
+        if user_id not in self.active_users:
+            self.active_users[user_id] = UserData()
         user_session = self.active_users.get(user_id)
+        if not user_session.typing_manager:
+            user_session.typing_manager = TypingManager(context.bot, user_id)
+        # Start persistent typing refresh in the background without blocking
+        try:
+            asyncio.create_task(user_session.typing_manager.start_typing())
+        except Exception:
+            pass
+
+        # Skip user data refresh during high load to improve performance
+
+        # Check if user is waiting to provide phone number for voice call
         if user_session and user_session.premium_offer_state:
             if user_session.premium_offer_state.get('type') == 'voice_call' and user_session.premium_offer_state.get('status') == 'waiting_for_phone':
                 # Allow user to change their mind with certain phrases
@@ -2768,11 +2780,9 @@ class SecretShareBot:
                 return
         user_session.message_count_since_last_image += 1
         
-        # Initialize and start typing indicator IMMEDIATELY
+        # Ensure typing manager exists (already started above)
         if not user_session.typing_manager:
             user_session.typing_manager = TypingManager(context.bot, user_id)
-        # Start typing indicator synchronously for instant response
-        await user_session.typing_manager.start_typing()
         # --- EARLY UPSALE CHECKS (move all upsell logic here, before AI response) ---
         # Prevent back-to-back upsells
         now = datetime.now(timezone.utc)
@@ -2948,11 +2958,11 @@ class SecretShareBot:
             
             logger.info(f"[CONTEXT] Initial size: {estimated_tokens} tokens ({char_count} chars)")
             
-            # Optimized: 3 turns for good personality retention with faster speed
+            # Optimized: 4 turns for better memory while keeping speed on A5000
             prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
             
-            # Keep last 3 turns for optimal speed/personality balance
-            minimal_history = user_session.conversation_history[-3:] if len(user_session.conversation_history) >= 3 else user_session.conversation_history
+            # Keep last 4 turns for speed/personality balance
+            minimal_history = user_session.conversation_history[-4:] if len(user_session.conversation_history) >= 4 else user_session.conversation_history
             for turn in minimal_history:
                 prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
             
@@ -2962,7 +2972,18 @@ class SecretShareBot:
             
             final_char_count = len(final_prompt)
             final_tokens = final_char_count // 3
-            logger.info(f"[CONTEXT SHIFT] ✅ FORCED to minimal context: {final_tokens} tokens ({final_char_count} chars) - targeting 10s")
+            # Guard rail: if prompt grows too large, squeeze to last 3 turns to protect latency
+            if final_tokens > 800:
+                prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
+                squeeze_history = user_session.conversation_history[-3:] if len(user_session.conversation_history) >= 3 else user_session.conversation_history
+                for turn in squeeze_history:
+                    prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
+                prompt_parts.append(f"<|im_start|>user\n{user_message}<|im_end|>")
+                prompt_parts.append(f"<|im_start|>assistant\n{character['full_name']}:")
+                final_prompt = "".join(prompt_parts)
+                final_char_count = len(final_prompt)
+                final_tokens = final_char_count // 3
+            logger.info(f"[CONTEXT SHIFT] ✅ Using {len(minimal_history)}-turn memory, {final_tokens} tokens ({final_char_count} chars)")
 
             raw_bot_response = ""
             if self.kobold_available:

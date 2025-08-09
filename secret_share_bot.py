@@ -2316,6 +2316,24 @@ class SecretShareBot:
             joined = " ".join(sentences[:max_sentences])
         return joined.strip()
 
+    def _strip_artifacts(self, text: str) -> str:
+        """Remove leaked system tokens like <|im_end|>, <im_end>, [INST], User:, etc."""
+        if not text:
+            return text
+        import re
+        patterns = [r"<\|im_start\|>", r"<\|im_end\|>", r"<im_end>", r"\|im_end\|", r"<im_start>", r"</s>", r"\[INST\]", r"\[/INST\]"]
+        cleaned = text
+        for p in patterns:
+            cleaned = re.sub(p, "", cleaned, flags=re.IGNORECASE)
+        # Remove leading role prefixes
+        cleaned = re.sub(r"^(assistant|system|bot)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+        # Cut anything after a stray closing marker just in case
+        cutoff_tokens = ["<|im_end|>", "</s>"]
+        for tok in cutoff_tokens:
+            if tok in cleaned:
+                cleaned = cleaned.split(tok)[0]
+        return cleaned.strip()
+
     def _remove_job_if_exists(self, name: str) -> bool:
        """Remove job with given name. Returns whether job was removed."""
        if not self.application.job_queue: return False
@@ -3023,8 +3041,9 @@ class SecretShareBot:
                 raw_bot_response = "*I sigh softly.* My thoughts are a bit hazy right now... I can't seem to connect. Please try again in a little while."
 
             # --- Final Processing ---
-            # Normalize underscores to asterisks, enforce clean actions and sentence
+            # Normalize underscores to asterisks, strip artifacts, enforce clean actions and sentence
             completed_sentence_response = self._normalize_actions(raw_bot_response)
+            completed_sentence_response = self._strip_artifacts(completed_sentence_response)
             completed_sentence_response = self._ensure_complete_sentence(completed_sentence_response)
             completed_sentence_response = self._validate_and_fix_actions(completed_sentence_response, user_session.user_name or "you")
             # Keep responses concise without cutting content: prefer 3–5 lines, 700 chars cap

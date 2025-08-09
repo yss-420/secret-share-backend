@@ -3109,11 +3109,27 @@ class SecretShareBot:
            # Reset to fresh session
            self.active_users[user_id] = UserData()
        
-       # INSTANT UI RESPONSE - Skip database wait for maximum speed
-       # Run database check in background (don't wait)
-       asyncio.create_task(self.db.get_or_create_user(user_id, user.username or "Unknown"))
+       # OPTIMIZED SPEED: Fast database check with instant fallback
+       try:
+           # Quick database check with minimal timeout
+           db_user = await asyncio.wait_for(
+               asyncio.create_task(self.db.get_or_create_user(user_id, user.username or "Unknown")),
+               timeout=0.5  # Super fast timeout
+           )
+       except (asyncio.TimeoutError, Exception):
+           # If DB is slow, assume new user and show age verification
+           db_user = {'age_verified': False}
        
-       # Show age verification INSTANTLY (assume not verified for new users)
+       if not db_user:
+           await update.message.reply_text("Sorry, there was a problem. Please try /start again. 😟")
+           return
+
+       # Check if already age verified - if yes, skip directly to character selection
+       if db_user.get('age_verified', False):
+           await self._show_character_selection(update.message, context)
+           return
+       
+       # Show age verification for new/unverified users
        keyboard = [[InlineKeyboardButton("✅ Yes, I am 18 or older", callback_data="verify_age_yes")], [InlineKeyboardButton("❌ No, I am under 18", callback_data="verify_age_no")]]
        await update.message.reply_text(
            self._response_cache["age_verification"] + "\n\n*Please confirm you are 18 years of age or older to continue.*",

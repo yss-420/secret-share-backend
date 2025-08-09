@@ -3281,7 +3281,7 @@ class SecretShareBot:
         )
 
         # 1–2 second break before background + scenario text
-        await asyncio.sleep(1.6)
+        await asyncio.sleep(2.0)
 
         # Show scenario background with scenario text together
         background_image_url = scenario.get("background_image_url")
@@ -3301,7 +3301,7 @@ class SecretShareBot:
             await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
 
         # 2–2.5 second beat before character intro (image + message)
-        await asyncio.sleep(2.3)
+        await asyncio.sleep(2.5)
 
         intro_image_url = scenario.get("intro_image_url")
         first_message = scenario['first_message']

@@ -2285,6 +2285,40 @@ class SecretShareBot:
             return f'*{fixed}*'
         return re.sub(r'\*([^*]+)\*', repl, text)
 
+    def _normalize_actions(self, text: str) -> str:
+        """Convert italic underscores to asterisks actions and remove stray underscores."""
+        import re
+        if not text:
+            return text
+        # Replace paired underscore italics with asterisk actions
+        text = re.sub(r'_(.+?)_', r'*\1*', text)
+        # Remove stray underscores not used for emphasis
+        # (safe heuristic: underscores not surrounded by letters/spaces)
+        text = re.sub(r'(?<!\w)_(?!\w)', '', text)
+        text = re.sub(r'(?<!\w)_(?=\w)', '', text)
+        text = re.sub(r'(?<=\w)_(?!\w)', '', text)
+        return text
+
+    def _trim_for_length(self, text: str, max_sentences: int = 3, max_lines: int = 4, max_chars: int = 500) -> str:
+        """Trim response to target length without cutting mid-sentence."""
+        if not text:
+            return text
+        t = text.strip()
+        # Hard char cap
+        if len(t) > max_chars:
+            t = t[:max_chars]
+        # Split into lines and sentences
+        lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+        joined = " ".join(lines)
+        # Sentence trim
+        import re
+        sentences = re.split(r'(?<=[.!?])\s+', joined)
+        if len(sentences) > max_sentences:
+            joined = " ".join(sentences[:max_sentences])
+        return joined.strip()
+
     def _remove_job_if_exists(self, name: str) -> bool:
        """Remove job with given name. Returns whether job was removed."""
        if not self.application.job_queue: return False
@@ -2958,11 +2992,11 @@ class SecretShareBot:
             
             logger.info(f"[CONTEXT] Initial size: {estimated_tokens} tokens ({char_count} chars)")
             
-            # Optimized: 4 turns for better memory while keeping speed on A5000
+            # Optimized: 5 turns for better memory while keeping speed on A5000
             prompt_parts = [f"<|im_start|>system\n{system_prompt_full}<|im_end|>"]
             
-            # Keep last 4 turns for speed/personality balance
-            minimal_history = user_session.conversation_history[-4:] if len(user_session.conversation_history) >= 4 else user_session.conversation_history
+            # Keep last 5 turns for speed/personality balance
+            minimal_history = user_session.conversation_history[-5:] if len(user_session.conversation_history) >= 5 else user_session.conversation_history
             for turn in minimal_history:
                 prompt_parts.append(f"<|im_start|>{turn['role']}\n{turn['content']}<|im_end|>")
             
@@ -2992,9 +3026,12 @@ class SecretShareBot:
                 raw_bot_response = "*I sigh softly.* My thoughts are a bit hazy right now... I can't seem to connect. Please try again in a little while."
 
             # --- Final Processing ---
-            completed_sentence_response = self._ensure_complete_sentence(raw_bot_response)
-            # Validate and fix action segments
+            # Normalize underscores to asterisks, enforce clean actions and sentence
+            completed_sentence_response = self._normalize_actions(raw_bot_response)
+            completed_sentence_response = self._ensure_complete_sentence(completed_sentence_response)
             completed_sentence_response = self._validate_and_fix_actions(completed_sentence_response, user_session.user_name or "you")
+            # Keep responses tight (3 sentences, max 4 lines)
+            completed_sentence_response = self._trim_for_length(completed_sentence_response, max_sentences=3, max_lines=4, max_chars=500)
             if not completed_sentence_response:
                 completed_sentence_response = "*I bite my lip, a thoughtful look in my eyes...* I don't know what to say."
 

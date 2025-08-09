@@ -1825,35 +1825,35 @@ class SecretShareBot:
     }
     
     def __init__(self, application: Application):
-       self.application = application
-       self.kobold_api = KoboldAPI(KOBOLD_URL)
-       self.image_generator = ImageGenerator(REPLICATE_API_TOKEN or "", self.kobold_api)
-       self.video_generator = VideoGenerator(WAVESPEED_API_TOKEN or "")
-       self.elevenlabs_manager = ElevenLabsManager(ELEVENLABS_API_KEY or "")
-       # Request queue to prevent overwhelming the system
-       self._request_semaphore = asyncio.Semaphore(15)  # Max 15 concurrent message handlers
-       self.db = Database()
-       self.kobold_available = False
-       self.active_users: Dict[int, UserData] = {}
+        self.application = application
+        self.kobold_api = KoboldAPI(KOBOLD_URL)
+        self.image_generator = ImageGenerator(REPLICATE_API_TOKEN or "", self.kobold_api)
+        self.video_generator = VideoGenerator(WAVESPEED_API_TOKEN or "")
+        self.elevenlabs_manager = ElevenLabsManager(ELEVENLABS_API_KEY or "")
+        # Request queue to prevent overwhelming the system
+        self._request_semaphore = asyncio.Semaphore(15)  # Max 15 concurrent message handlers
+        self.db = Database()
+        self.kobold_available = False
+        self.active_users: Dict[int, UserData] = {}
         # Fast-path cache: users who have verified age in this process lifetime
         self.age_verified_cache = set()
-       self.anticipation_jobs = {}  # user_id -> list of job references
-       # Webhook security
-       self._webhook_secret = os.getenv('TELEGRAM_WEBHOOK_SECRET', '')
+        self.anticipation_jobs = {}  # user_id -> list of job references
+        # Webhook security
+        self._webhook_secret = os.getenv('TELEGRAM_WEBHOOK_SECRET', '')
         # --- Webhook server for Wavespeed video delivery ---
-       self.web_app = web.Application()
-       self.web_app.add_routes([
-             web.post('/api/wavespeed-webhook', self.handle_wavespeed_webhook),
-             web.post('/api/twilio-webhook', self.handle_twilio_webhook),
-             web.post('/api/elevenlabs-webhook', self.handle_elevenlabs_webhook),
-             web.post('/api/initiate-payment', self.handle_payment_request),
-             web.post('/api/create-invoice', self.create_invoice_link),
-             web.options('/api/create-invoice', self.handle_cors_options),
-         ])
-       self.webhook_thread = threading.Thread(target=self._run_webhook_server, daemon=True)
-       self.webhook_thread.start()
+        self.web_app = web.Application()
+        self.web_app.add_routes([
+            web.post('/api/wavespeed-webhook', self.handle_wavespeed_webhook),
+            web.post('/api/twilio-webhook', self.handle_twilio_webhook),
+            web.post('/api/elevenlabs-webhook', self.handle_elevenlabs_webhook),
+            web.post('/api/initiate-payment', self.handle_payment_request),
+            web.post('/api/create-invoice', self.create_invoice_link),
+            web.options('/api/create-invoice', self.handle_cors_options),
+        ])
+        self.webhook_thread = threading.Thread(target=self._run_webhook_server, daemon=True)
+        self.webhook_thread.start()
         # Call tracking for webhooks
-       self.active_calls: Dict[str, int] = {}  # call_id -> user_id
+        self.active_calls: Dict[str, int] = {}  # call_id -> user_id
 
     def _run_webhook_server(self):
        import asyncio
@@ -3281,7 +3281,7 @@ class SecretShareBot:
        )
        
         # Faster pause to keep flow snappy
-        await asyncio.sleep(0.6)
+       await asyncio.sleep(0.6)
 
        background_image_url = scenario.get("background_image_url")
        intro_text = f"_{scenario['intro_text']}_"
@@ -3299,7 +3299,7 @@ class SecretShareBot:
        else:
             await context.bot.send_message(chat_id=user_id, text=intro_text, parse_mode=ParseMode.MARKDOWN)
 
-        await asyncio.sleep(0.6)
+       await asyncio.sleep(0.6)
 
        intro_image_url = scenario.get("intro_image_url")
        first_message = scenario['first_message']
